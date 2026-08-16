@@ -1,0 +1,25 @@
+version: "3.8"
+
+services:
+  media-library:
+    build: .
+    container_name: media-library
+    # OBRIGATÓRIO: a descoberta SSDP/DLNA usa multicast na rede local.
+    # Sem network_mode: host o container não verá os servidores DLNA.
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8080
+      - DATA_DIR=/app/data
+      - ENABLE_METADATA=true
+      - TMDB_API_KEY=${TMDB_API_KEY:-}
+    volumes:
+      # Persiste biblioteca, pôsteres e cache
+      - media-data:/app/data
+    # Porta exposta quando NÃO usar network_mode: host
+    ports:
+      - "8080:8080"
+
+volumes:
+  media-data:

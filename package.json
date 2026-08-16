@@ -1,0 +1,27 @@
+{
+  "name": "media-library",
+  "version": "1.0.0",
+  "description": "Servidor/aplicação de mídia local para Linux — galeria web alimentada por servidores DLNA/UPnP",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "bin": {
+    "media-library": "./src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test test/*.test.js",
+    "desktop": "electron electron/main.js",
+    "desktop:install": "npm install --save-dev electron"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^35.7.5"
+  },
+  "allowScripts": {
+    "electron@35.7.5": true
+  }
+}
