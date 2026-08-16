@@ -103,10 +103,8 @@ function mediaToApi(m) {
     }
   }
   if (m.manual_title) out.title = m.manual_title;
-  if (m.custom_poster) {
-    out.poster = m.custom_poster;
-    out.thumbnail = m.custom_poster;
-  }
+  if (m.custom_poster) out.poster = m.custom_poster;
+  if (m.custom_thumbnail) out.thumbnail = m.custom_thumbnail;
   return out;
 }
 
@@ -426,7 +424,7 @@ async function handleApi(req, res, { jobs, metadata, app }) {
       const m = mediaRepo.get(id);
       if (!m) return json(res, 404, { error: 'Mídia não encontrada' });
       const { localPath } = require('../cache/images.js');
-      let thumb = m.custom_poster || null;
+      let thumb = m.custom_thumbnail || m.custom_poster || null;
       if (!thumb) {
         const movie = movieRepo.byMediaItem(id);
         if (movie && movie.poster_path) thumb = movie.poster_path;
@@ -486,10 +484,17 @@ async function handleApi(req, res, { jobs, metadata, app }) {
       const m = mediaRepo.get(id);
       if (!m) return json(res, 404, { error: 'Mídia não encontrada' });
       const groupKey = m.normalized_title || m.title;
+      const target = (url.searchParams.get('target') || 'poster') === 'thumbnail' ? 'thumbnail' : 'poster';
+      const setCustom = (rel) => target === 'thumbnail'
+        ? mediaRepo.setCustomThumbnailByGroup(groupKey, rel)
+        : mediaRepo.setCustomPosterByGroup(groupKey, rel);
+      const clearCustom = () => target === 'thumbnail'
+        ? mediaRepo.clearCustomThumbnailByGroup(groupKey)
+        : mediaRepo.clearCustomPosterByGroup(groupKey);
 
       if (method === 'DELETE') {
-        mediaRepo.clearCustomPosterByGroup(groupKey);
-        return json(res, 200, { ok: true, poster: null });
+        clearCustom();
+        return json(res, 200, { ok: true, [target]: null });
       }
 
       if (method === 'POST') {
@@ -506,8 +511,8 @@ async function handleApi(req, res, { jobs, metadata, app }) {
             } else if (local && /^(posters|backdrops|thumbnails)\/[\w.-]+$/.test(local)) {
               rel = local;
             } else {
-              mediaRepo.clearCustomPosterByGroup(groupKey);
-              return json(res, 200, { ok: true, poster: null });
+              clearCustom();
+              return json(res, 200, { ok: true, [target]: null });
             }
           } else if (ct.startsWith('image/') || ct.startsWith('application/octet-stream')) {
             const buf = await readRawBody(req);
@@ -516,8 +521,8 @@ async function handleApi(req, res, { jobs, metadata, app }) {
           } else {
             return json(res, 400, { error: 'Envie uma URL (JSON) ou uma imagem (upload)' });
           }
-          mediaRepo.setCustomPosterByGroup(groupKey, rel);
-          return json(res, 200, { ok: true, poster: rel });
+          setCustom(rel);
+          return json(res, 200, { ok: true, [target]: rel });
         } catch (err) {
           return json(res, 500, { error: err.message });
         }

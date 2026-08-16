@@ -216,7 +216,14 @@ export async function renderDetails(id) {
     modal.className = 'cover-modal';
     modal.innerHTML = `
       <div class="cover-modal-box">
-        <h4>Definir capa personalizada</h4>
+        <h4>Definir imagem personalizada</h4>
+        <label class="cover-target-row">
+          <span>Aplicar como</span>
+          <select id="cover-target">
+            <option value="poster">Capa (pôster)</option>
+            <option value="thumbnail">Thumbnail</option>
+          </select>
+        </label>
         ${optionsHtml}
         <div class="cover-url-row">
           <input type="text" id="cover-url" placeholder="https://exemplo.com/imagem.jpg">
@@ -226,16 +233,17 @@ export async function renderDetails(id) {
         <label class="btn btn-secondary btn-sm" for="cover-file">${icon('upload', 15)} Escolher arquivo local</label>
         <input type="file" id="cover-file" accept="image/*" style="display:none">
         <div class="cover-actions">
-          <button class="btn btn-ghost btn-sm" id="cover-remove">Remover capa personalizada</button>
+          <button class="btn btn-ghost btn-sm" id="cover-remove">Remover imagem</button>
           <button class="btn btn-ghost btn-sm" id="cover-close">Fechar</button>
         </div>
       </div>`;
     document.body.appendChild(modal);
 
+    const target = () => modal.querySelector('#cover-target').value || 'poster';
     const setFromPath = async (path) => {
       try {
-        await api.post(`/api/media/${id}/image`, { path });
-        toast('Capa definida', 'success');
+        await api.post(`/api/media/${id}/image?target=${target()}`, { path });
+        toast(target() === 'thumbnail' ? 'Thumbnail definido' : 'Capa definida', 'success');
         modal.remove();
         renderDetails(id);
       } catch (err) { toast(err.message, 'error'); }
@@ -254,8 +262,8 @@ export async function renderDetails(id) {
       const btn = modal.querySelector('#cover-url-go');
       btn.disabled = true;
       try {
-        await api.post(`/api/media/${id}/image`, { url });
-        toast('Capa definida', 'success');
+        await api.post(`/api/media/${id}/image?target=${target()}`, { url });
+        toast(target() === 'thumbnail' ? 'Thumbnail definido' : 'Capa definida', 'success');
         modal.remove();
         renderDetails(id);
       } catch (err) {
@@ -268,14 +276,14 @@ export async function renderDetails(id) {
       const f = modal.querySelector('#cover-file').files[0];
       if (!f) return;
       try {
-        const res = await fetch(`/api/media/${id}/image`, {
+        const res = await fetch(`/api/media/${id}/image?target=${target()}`, {
           method: 'POST',
           headers: { 'Content-Type': f.type || 'image/jpeg' },
           body: f,
         });
         const data = await res.json().catch(() => null);
         if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
-        toast('Capa definida', 'success');
+        toast(target() === 'thumbnail' ? 'Thumbnail definido' : 'Capa definida', 'success');
         modal.remove();
         renderDetails(id);
       } catch (err) {
@@ -285,8 +293,8 @@ export async function renderDetails(id) {
 
     modal.querySelector('#cover-remove').onclick = async () => {
       try {
-        await api.del(`/api/media/${id}/image`);
-        toast('Capa personalizada removida', 'success');
+        await api.del(`/api/media/${id}/image?target=${target()}`);
+        toast('Imagem removida', 'success');
         modal.remove();
         renderDetails(id);
       } catch (err) {

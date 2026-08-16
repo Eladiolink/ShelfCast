@@ -615,6 +615,24 @@ input, select { font-family: inherit; }
 
 .cover-modal-box h4 { font-size: 16px; }
 
+.cover-target-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13.5px;
+  color: var(--text-dim);
+}
+
+.cover-target-row select {
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
 .cover-url-row {
   display: flex;
   gap: 8px;

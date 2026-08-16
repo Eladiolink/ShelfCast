@@ -339,6 +339,16 @@ const mediaRepo = {
       .run(groupKey);
   },
 
+  setCustomThumbnailByGroup(groupKey, relativePath) {
+    prepare(`UPDATE media_items SET custom_thumbnail = ? WHERE COALESCE(NULLIF(normalized_title, ''), title) = ?`)
+      .run(relativePath, groupKey);
+  },
+
+  clearCustomThumbnailByGroup(groupKey) {
+    prepare(`UPDATE media_items SET custom_thumbnail = NULL WHERE COALESCE(NULLIF(normalized_title, ''), title) = ?`)
+      .run(groupKey);
+  },
+
   setHidden(id, hidden) {
     prepare('UPDATE media_items SET hidden = ? WHERE id = ?').run(hidden ? 1 : 0, id);
   },
@@ -399,7 +409,7 @@ const mediaRepo = {
                MAX(mv.rating) AS rating,
                MAX(mv.overview) AS overview,
                MAX(mv.backdrop_path) AS backdrop_path,
-               COALESCE(MAX(mi.custom_poster), MAX(mv.poster_path)) AS poster,
+               COALESCE(MAX(mi.custom_thumbnail), MAX(mi.custom_poster), MAX(mv.poster_path)) AS poster,
                MAX(s.name) AS server_name,
                MIN(mi.metadata_status) AS metadata_status,
                MIN(mi.id) AS min_id,
@@ -453,7 +463,7 @@ const mediaRepo = {
     const rows = prepare(`
       SELECT ${groupKey} AS group_key,
              ${titleExpr} AS series_title,
-             COALESCE(MAX(mi.custom_poster), MAX(se.poster_path), NULLIF(MIN(mi.thumbnail), '')) AS poster,
+             COALESCE(MAX(mi.custom_thumbnail), MAX(mi.custom_poster), MAX(se.poster_path), NULLIF(MIN(mi.thumbnail), '')) AS poster,
              MAX(se.rating) AS rating, MAX(se.overview) AS overview,
              MAX(se.year) AS year, MAX(se.backdrop_path) AS backdrop_path,
              MAX(se.id) AS series_id,

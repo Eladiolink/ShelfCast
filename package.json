@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
+    "stop": "node scripts/stop.js",
     "test": "node --test test/*.test.js",
     "desktop": "electron electron/main.js",
     "desktop:install": "npm install --save-dev electron"

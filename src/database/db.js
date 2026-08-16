@@ -213,6 +213,7 @@ const MIGRATIONS = [
   ['hidden', 'ALTER TABLE media_items ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0'],
   ['manual_title', 'ALTER TABLE media_items ADD COLUMN manual_title TEXT'],
   ['custom_poster', 'ALTER TABLE media_items ADD COLUMN custom_poster TEXT'],
+  ['custom_thumbnail', 'ALTER TABLE media_items ADD COLUMN custom_thumbnail TEXT'],
 ];
 
 function migrate() {

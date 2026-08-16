@@ -9,6 +9,7 @@ const { MpvController } = require('./mpv.js');
 
 const ROOT = path.join(__dirname, '..');
 const ICON = path.join(__dirname, 'assets', 'icon.png');
+const PID_FILE = path.join(ROOT, 'data', 'server.pid');
 
 function getPort() {
   let port = 8080;
@@ -41,18 +42,24 @@ function isServerUp() {
   });
 }
 
+/**
+ * Inicia o servidor como daemon DETACHED: continua rodando mesmo depois que o
+ * aplicativo (Electron) for fechado. Grava o PID em data/server.pid para
+ * permitir reiniciar/parar pela bandeja. Se já estiver rodando, apenas reutiliza.
+ */
 async function startServer() {
   if (await isServerUp()) return;
   return new Promise((resolve, reject) => {
+    try { fs.unlinkSync(PID_FILE); } catch { /* ok */ }
     serverChild = spawn(process.execPath, ['src/index.js'], {
       cwd: ROOT,
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,   // roda independente do app
+      stdio: 'ignore',  // logs vão para data/logs via pino
     });
-    const forward = (stream, tag) => (d) => process.stdout.write(`[${tag}] ${d}`);
-    serverChild.stdout.on('data', forward(serverChild.stdout, 'media-library'));
-    serverChild.stderr.on('data', forward(serverChild.stderr, 'media-library'));
-    serverChild.on('exit', (code) => { serverChild = null; if (code && code !== 0) console.error('servidor encerrou com código', code); });
+    serverChild.unref();
+    serverChild.on('error', (err) => reject(err));
+    try { fs.writeFileSync(PID_FILE, String(serverChild.pid)); } catch { /* ok */ }
 
     const deadline = Date.now() + 30000;
     const poll = async () => {
@@ -62,6 +69,37 @@ async function startServer() {
     };
     poll();
   });
+}
+
+function stopServer() {
+  try {
+    const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8'), 10);
+    if (pid && pid !== process.pid) {
+      try { process.kill(pid, 'SIGTERM'); } catch { /* já encerrou */ }
+    }
+  } catch { /* sem pid */ }
+  if (serverChild) { serverChild = null; }
+}
+
+function waitServerDown(timeout = 8000) {
+  return new Promise((resolve) => {
+    const deadline = Date.now() + timeout;
+    const poll = () => {
+      isServerUp().then((up) => {
+        if (!up) return resolve();
+        if (Date.now() > deadline) return resolve();
+        setTimeout(poll, 400);
+      });
+    };
+    poll();
+  });
+}
+
+async function restartServer() {
+  stopServer();
+  await waitServerDown();
+  await startServer();
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.loadURL(BASE);
 }
 
 function createWindow() {
@@ -88,11 +126,10 @@ function createWindow() {
     return { action: 'deny' };
   });
 
-  mainWindow.on('close', (e) => {
-    if (!app.isQuitting) {
-      e.preventDefault();
-      mainWindow.hide();
-    }
+  mainWindow.on('close', () => {
+    // Fecha o app de verdade (libera o terminal). O servidor é um daemon
+    // detached e continua rodando em background.
+    app.isQuitting = true;
   });
   mainWindow.on('closed', () => { mainWindow = null; });
 }
@@ -104,6 +141,9 @@ function createTray() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Abrir Media Library', click: () => { if (!mainWindow) createWindow(); else mainWindow.show(); } },
     { label: 'Web (navegador)', click: () => shell.openExternal(BASE) },
+    { type: 'separator' },
+    { label: 'Reiniciar servidor', click: () => restartServer().catch((e) => console.error('falha ao reiniciar servidor:', e.message)) },
+    { label: 'Parar servidor', click: () => stopServer() },
     { type: 'separator' },
     { label: 'Sair', click: () => { app.isQuitting = true; app.quit(); } },
   ]));
@@ -219,8 +259,11 @@ if (!gotLock) {
     app.isQuitting = true;
     clearInterval(progressTimer);
     if (mpv) { mpv.stop(); mpv = null; }
-    if (serverChild) serverChild.kill('SIGTERM');
+    // O servidor é um daemon DETACHED: não é encerrado aqui — continua rodando.
+    // Para encerrá-lo, use a bandeja → "Parar servidor".
   });
 
-  app.on('window-all-closed', () => { /* app continua na bandeja */ });
+  app.on('window-all-closed', () => {
+    app.quit();
+  });
 }

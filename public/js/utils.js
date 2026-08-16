@@ -48,8 +48,9 @@ export function badgeFor(media) {
 }
 
 export function posterFor(media) {
+  if (media.custom_thumbnail) return `/data/${media.custom_thumbnail}`;
   if (media.poster) return `/data/${media.poster}`;
-  if (media.thumbnail && media.thumbnail.startsWith('http')) return media.thumbnail;
+  if (media.thumbnail && /^https?:/.test(media.thumbnail)) return media.thumbnail;
   return '/placeholder.svg';
 }
 
