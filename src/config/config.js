@@ -55,6 +55,8 @@ const config = {
   FFMPEG_PATH: env.FFMPEG_PATH || 'ffmpeg',
   FFPROBE_PATH: env.FFPROBE_PATH || 'ffprobe',
   ENABLE_TRANSCODE: bool(env.ENABLE_TRANSCODE, true),
+  ENABLE_HW_TRANSCODE: bool(env.ENABLE_HW_TRANSCODE, true),
+  HW_ACCEL: env.HW_ACCEL || 'auto',
   LOG_LEVEL: (env.LOG_LEVEL || 'info').toLowerCase(),
   STREAM_BUFFER: num(env.STREAM_BUFFER, 1024 * 1024 * 4),
   HTTP_TIMEOUT: num(env.HTTP_TIMEOUT, 30000),

@@ -123,6 +123,56 @@ function canDirectPlay(media, acceptHeader = '') {
   return false;
 }
 
+// ---- Aceleração de hardware (transcode full de 4K/HEVC) ----
+let hwEncoderPromise = null;
+
+const HW_ENCODER = { qsv: 'h264_qsv', nvenc: 'h264_nvenc', vaapi: 'h264_vaapi' };
+
+function detectHwEncoder() {
+  if (hwEncoderPromise) return hwEncoderPromise;
+  const forced = String(config.HW_ACCEL || 'auto').toLowerCase();
+  hwEncoderPromise = new Promise((resolve) => {
+    if (forced === 'none') return resolve(null);
+    const child = spawn(config.FFMPEG_PATH, ['-hide_banner', '-encoders'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.on('error', () => resolve(null));
+    child.on('close', () => {
+      const preferred = forced !== 'auto' ? [forced] : ['qsv', 'nvenc', 'vaapi'];
+      for (const name of preferred) {
+        const enc = HW_ENCODER[name];
+        if (enc && out.includes(enc)) return resolve(name);
+      }
+      resolve(null);
+    });
+  });
+  return hwEncoderPromise;
+}
+
+function hwInputArgs(hw) {
+  if (hw === 'qsv') return ['-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv'];
+  if (hw === 'nvenc') return ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'];
+  if (hw === 'vaapi') return ['-vaapi_device', '/dev/dri/renderD128', '-hwaccel', 'vaapi', '-hwaccel_output_format', 'vaapi'];
+  return [];
+}
+
+function hwVideoArgs(hw) {
+  if (hw === 'qsv') return ['-c:v', 'h264_qsv', '-preset', 'veryfast', '-q', '20'];
+  if (hw === 'nvenc') return ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-cq', '20', '-b:v', '0'];
+  if (hw === 'vaapi') return ['-c:v', 'h264_vaapi', '-qp', '20'];
+  return [];
+}
+
+// Converte 10-bit/HDR para 8-bit NV12 (com tone mapping HDR->SDR no QSV) antes
+// de codificar — o h264_qsv não aceita P010 (10-bit) e precisa de NV12.
+// Nota: use ':' (opções do vpp_qsv) e não ',' (que invocaria o filtro tonemap de software).
+function hwVideoFilter(hw) {
+  if (hw === 'qsv') return ['-vf', 'vpp_qsv=format=nv12:tonemap=1'];
+  if (hw === 'nvenc') return ['-vf', 'scale_cuda=format=nv12'];
+  if (hw === 'vaapi') return ['-vf', 'scale_vaapi=format=nv12'];
+  return [];
+}
+
 function probeWithFfmpeg(url, ffprobePath) {
   return new Promise((resolve) => {
     const args = ['-v', 'error', '-show_entries', 'stream=codec_type,codec_name:format=format_name,duration', '-of', 'json', url];
@@ -189,8 +239,8 @@ function probeStreams(url) {
  * Retorna { audio: [...], subtitles: [...] }.
  */
 async function getTracks(media) {
-  if (!media || !media.url || !isSafeUrl(media.url)) return { audio: [], subtitles: [] };
-  const cacheKey = `tracks:${media.id}`;
+  if (!media || !media.url || !isSafeUrl(media.url)) return { audio: [], subtitles: [], video: null };
+  const cacheKey = `tracks:v2:${media.id}`;
   const cached = metadataCacheRepo.get(cacheKey);
   if (cached && cached.fetched_at) {
     const age = Date.now() - new Date(cached.fetched_at).getTime();
@@ -212,7 +262,8 @@ async function getTracks(media) {
     language: s.language || null,
     kind: TEXT_SUB_CODECS.has(codecSet(s.codec)) ? 'text' : IMAGE_SUB_CODECS.has(codecSet(s.codec)) ? 'image' : 'other',
   }));
-  const result = { audio, subtitles };
+  const videoStream = streams.find((s) => s.type === 'video');
+  const result = { audio, subtitles, video: videoStream ? { codec: videoStream.codec, codecName: videoStream.codec } : null };
   try { metadataCacheRepo.set(cacheKey, 'tracks', result); } catch { /* sem cache */ }
   return result;
 }
@@ -223,64 +274,82 @@ async function getTracks(media) {
  * mode='full'   -> re-encoda com libx264 + aac (lento, para codecs incompatíveis)
  */
 function streamTranscode({ res, media, range, mode = 'remux', audioIndex = null, start = null, audioInfo = null }) {
-  return new Promise((resolve, reject) => {
-    const { url } = media;
-    if (!config.FFMPEG_PATH) return reject(new Error('FFmpeg não configurado'));
-    const args = ['-hide_banner', '-loglevel', 'error'];
+  const { url } = media;
+  if (!config.FFMPEG_PATH) return Promise.reject(new Error('FFmpeg não configurado'));
 
-    // Início do stream em segundos (seek por parâmetro explícito, usado ao
-    // trocar faixa de áudio/retomar — streams remux não são seekable no cliente).
-    const startSec = start != null && start > 0 ? parseFloat(start) : 0;
+  const startSec = start != null && start > 0 ? parseFloat(start) : 0;
+  const effectiveMode = startSec > 0 ? 'full' : mode;
+  const audioMap = audioIndex != null && audioIndex !== '' ? `0:${audioIndex}` : '0:a:0?';
+  const audioArgs = buildAudioArgs(audioInfo);
+  const mp4Args = ['-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', '-'];
+
+  const buildArgs = (hw) => {
+    const args = ['-hide_banner', '-loglevel', 'error'];
     if (startSec > 0) args.push('-ss', String(startSec));
 
-    args.push('-i', url);
-
-    // Com seek (start > 0) NÃO dá para usar "-c:v copy": o vídeo começa no
-    // keyframe anterior ao ponto de seek, enquanto o áudio re-encodado começa
-    // no ponto exato → dessincroniza. Re-encoda o vídeo para seek preciso e
-    // A/V sincronizado.
-    const effectiveMode = startSec > 0 ? 'full' : mode;
-
-    const audioMap = audioIndex != null && audioIndex !== '' ? `0:${audioIndex}` : '0:a:0?';
-    const audioArgs = buildAudioArgs(audioInfo);
-
     if (effectiveMode === 'full') {
-      args.push(
-        '-map', '0:v:0', '-map', audioMap, '-c:v', 'libx264', '-preset', 'faster',
-        '-crf', '18', '-pix_fmt', 'yuv420p', ...audioArgs,
-        '-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', '-'
-      );
+      if (hw) args.push(...hwInputArgs(hw));
+      args.push('-i', url, '-map', '0:v:0', '-map', audioMap);
+      if (hw) {
+        args.push(...hwVideoFilter(hw));
+        args.push(...hwVideoArgs(hw));
+      } else {
+        args.push('-c:v', 'libx264', '-preset', 'faster', '-crf', '18', '-pix_fmt', 'yuv420p');
+      }
+      args.push(...audioArgs, ...mp4Args);
     } else {
       // Remux: copia o vídeo (rápido, sem perda). O áudio é copiado quando
       // compatível (AAC/MP3/Opus) ou re-encodado para AAC multicanal quando não.
-      args.push(
-        '-map', '0:v:0', '-map', audioMap, '-c:v', 'copy', ...audioArgs,
-        '-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', '-'
-      );
+      args.push('-i', url, '-map', '0:v:0', '-map', audioMap, '-c:v', 'copy', ...audioArgs, ...mp4Args);
     }
+    return args;
+  };
 
-    let child;
-    try {
-      child = spawn(config.FFMPEG_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (err) {
-      return reject(err);
+  return new Promise((resolve, reject) => {
+    let headersSent = false;
+    const spawnFfmpeg = (args, isHw) => {
+      let child;
+      try {
+        child = spawn(config.FFMPEG_PATH, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch (err) {
+        return reject(err);
+      }
+      if (!headersSent) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Accept-Ranges', 'none');
+        headersSent = true;
+      }
+
+      let wrote = false;
+      child.stdout.on('data', (d) => { if (d && d.length) wrote = true; });
+      child.stdout.pipe(res);
+      child.stderr.on('data', (d) => {
+        const s = d.toString();
+        if (/error|not found|invalid/i.test(s) && config.LOG_LEVEL === 'debug') log.debug('ffmpeg stderr', { s: s.slice(0, 500) });
+      });
+      child.on('error', (err) => reject(err));
+      res.on('close', () => {
+        try { child.kill('SIGKILL'); } catch { /* ok */ }
+      });
+      child.on('close', (code) => {
+        // Se o encoder por hardware falhou antes de produzir qualquer dado,
+        // tenta novamente com software (libx264).
+        if (isHw && code !== 0 && !wrote) {
+          log.warn('transcode por hardware falhou, caindo para software', { code });
+          spawnFfmpeg(buildArgs(null), false);
+          return;
+        }
+        resolve({ proxied: true, mode });
+      });
+    };
+
+    if (effectiveMode === 'full' && config.ENABLE_HW_TRANSCODE) {
+      detectHwEncoder().then((hw) => spawnFfmpeg(buildArgs(hw), !!hw)).catch(() => spawnFfmpeg(buildArgs(null), false));
+    } else {
+      spawnFfmpeg(buildArgs(null), false);
     }
-
-    res.statusCode = 200;
-    res.setHeader('Content-Type', 'video/mp4');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Accept-Ranges', 'none');
-
-    child.stdout.pipe(res);
-    child.stderr.on('data', (d) => {
-      const s = d.toString();
-      if (/error|not found|invalid/i.test(s) && config.LOG_LEVEL === 'debug') log.debug('ffmpeg stderr', { s: s.slice(0, 500) });
-    });
-    child.on('error', (err) => reject(err));
-    res.on('close', () => {
-      try { child.kill('SIGKILL'); } catch { /* ok */ }
-    });
-    child.on('close', () => resolve({ proxied: true, mode }));
   });
 }
 
@@ -319,22 +388,34 @@ function streamSubtitle({ res, media, streamIndex = null, externalUri = null }) 
 }
 
 /**
- * Descobre o codec/canais da faixa de áudio selecionada para decidir a melhor
- * codificação (copiar AAC/MP3/Opus ou re-encodar os demais preservando canais).
- * Usa o cache de 24h do getTracks; retorna null se a sondagem falhar.
+ * Descobre o codec/canais da faixa de áudio selecionada e o codec de vídeo.
+ * Usa o cache de 24h do getTracks; retorna valores nulos se a sondagem falhar.
  */
-async function audioInfoFor(media, audioIndex) {
+async function mediaInfoFor(media, audioIndex) {
   try {
     const tracks = await getTracks(media);
     const list = (tracks && tracks.audio) || [];
+    let audioInfo = null;
     if (audioIndex != null) {
-      const found = list.find((a) => a.index === audioIndex);
-      if (found) return found;
+      audioInfo = list.find((a) => a.index === audioIndex) || null;
     }
-    return list[0] || null;
+    if (!audioInfo) audioInfo = list[0] || null;
+    const videoCodec = tracks && tracks.video ? tracks.video.codec : null;
+    return { audioInfo, videoCodec };
   } catch {
-    return null;
+    return { audioInfo: null, videoCodec: null };
   }
+}
+
+/**
+ * Chromium/Electron não decodifica HEVC (H.265); nesses casos o remux (-c:v copy)
+ * resultaria em tela preta. Detecta se o codec de vídeo exige re-encode.
+ * Usa o codec sondado e, como fallback, o codec inferido do nome do arquivo.
+ */
+function videoNeedsTranscode(videoCodec, mediaCodec) {
+  const c = String(videoCodec || mediaCodec || '').toLowerCase();
+  if (!c) return false;
+  return /hevc|h\.?265|x265/.test(c);
 }
 
 /**
@@ -350,20 +431,26 @@ async function handleStream(req, res, { id, transcode, range, audio, start }) {
 
   try {
     if (transcode === 'full') {
-      await streamTranscode({ res, media, range, mode: 'full', audioIndex: audio, start, audioInfo: await audioInfoFor(media, audio) });
+      const { audioInfo } = await mediaInfoFor(media, audio);
+      await streamTranscode({ res, media, range, mode: 'full', audioIndex: audio, start, audioInfo });
       return null;
     }
     if (transcode === 'remux') {
-      await streamTranscode({ res, media, range, mode: 'remux', audioIndex: audio, start, audioInfo: await audioInfoFor(media, audio) });
+      const { audioInfo, videoCodec } = await mediaInfoFor(media, audio);
+      const mode = videoNeedsTranscode(videoCodec, media.video_codec) ? 'full' : 'remux';
+      await streamTranscode({ res, media, range, mode, audioIndex: audio, start, audioInfo });
       return null;
     }
-    if (canDirectPlay(media, req.headers.accept)) {
+    if (canDirectPlay(media, req.headers.accept) && !videoNeedsTranscode(null, media.video_codec)) {
       await streamDirect({ res, url: media.url, headers: {}, range });
       return null;
     }
     if (config.ENABLE_TRANSCODE) {
-      // Formato que o navegador não reproduz: remux rápido primeiro
-      await streamTranscode({ res, media, range, mode: 'remux', audioIndex: audio, start, audioInfo: await audioInfoFor(media, audio) });
+      // Formato que o navegador não reproduz: remux rápido (se codec compatível)
+      // ou transcode completo (ex.: HEVC, que daria tela preta no Chromium).
+      const { audioInfo, videoCodec } = await mediaInfoFor(media, audio);
+      const mode = videoNeedsTranscode(videoCodec, media.video_codec) ? 'full' : 'remux';
+      await streamTranscode({ res, media, range, mode, audioIndex: audio, start, audioInfo });
       return null;
     }
     return { status: 415, body: 'Formato não suportado pelo navegador e transcoding desativado' };

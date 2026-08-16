@@ -179,10 +179,10 @@ const mediaRepo = {
     if (year) { where.push('mi.year = @year'); params.year = year; }
     if (minDuration) { where.push('mi.duration IS NOT NULL AND mi.duration >= @minDuration'); params.minDuration = minDuration; }
     if (resolution) {
-      if (resolution === '4K') where.push('mi.resolution IN ("4K", "2160p")');
-      else if (resolution === '1080p') where.push('mi.resolution = "1080p"');
-      else if (resolution === '720p') where.push('mi.resolution = "720p"');
-      else if (resolution === 'SD') where.push('mi.resolution IN ("SD", "480p", "576p")');
+      if (resolution === '4K') where.push("mi.resolution IN ('4K', '2160p')");
+      else if (resolution === '1080p') where.push("mi.resolution = '1080p'");
+      else if (resolution === '720p') where.push("mi.resolution = '720p'");
+      else if (resolution === 'SD') where.push("mi.resolution IN ('SD', '480p', '576p')");
     }
     if (codec) { where.push('mi.video_codec = @codec'); params.codec = codec; }
     if (genre) {
@@ -361,10 +361,10 @@ const mediaRepo = {
     if (year) { where.push('COALESCE(mv.year, mi.year) = @year'); params.year = year; }
     if (minDuration) { where.push('mi.duration IS NOT NULL AND mi.duration >= @minDuration'); params.minDuration = minDuration; }
     if (resolution) {
-      if (resolution === '4K') where.push('mi.resolution IN ("4K", "2160p")');
-      else if (resolution === '1080p') where.push('mi.resolution = "1080p"');
-      else if (resolution === '720p') where.push('mi.resolution = "720p"');
-      else if (resolution === 'SD') where.push('mi.resolution IN ("SD", "480p", "576p")');
+      if (resolution === '4K') where.push("mi.resolution IN ('4K', '2160p')");
+      else if (resolution === '1080p') where.push("mi.resolution = '1080p'");
+      else if (resolution === '720p') where.push("mi.resolution = '720p'");
+      else if (resolution === 'SD') where.push("mi.resolution IN ('SD', '480p', '576p')");
     }
     if (codec) { where.push('mi.video_codec = @codec'); params.codec = codec; }
     if (genre) {
