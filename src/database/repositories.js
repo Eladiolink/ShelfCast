@@ -34,6 +34,19 @@ const serverRepo = {
     return prepare(q).all().map(decorate);
   },
 
+  createLocal(name, path) {
+    const { lastInsertRowid } = prepare(`
+      INSERT INTO servers (name, type, path, status, last_seen)
+      VALUES (?, 'local', ?, 'online', ?)
+    `).run(name, path, new Date().toISOString());
+    return this.get(lastInsertRowid);
+  },
+
+  findByPath(path) {
+    const row = prepare('SELECT * FROM servers WHERE path = ? AND type = \'local\'').get(path);
+    return row ? decorate(row) : null;
+  },
+
   get(id) {
     const row = prepare('SELECT * FROM servers WHERE id = ?').get(id);
     return row ? decorate(row) : null;
@@ -95,6 +108,7 @@ const mediaRepo = {
       mime_type: m.mime_type ?? null,
       size: m.size ?? null,
       thumbnail: m.thumbnail ?? null,
+      local_path: m.local_path ?? null,
       season: m.season ?? null,
       episode: m.episode ?? null,
       year: m.year ?? null,
@@ -113,12 +127,12 @@ const mediaRepo = {
       INSERT INTO media_items (
         server_id, object_id, parent_id, title, original_title, type, media_type,
         url, duration, format, video_codec, audio_codec, width, height, bitrate,
-        mime_type, size, thumbnail, season, episode, year, date, album, artist,
+        mime_type, size, thumbnail, local_path, season, episode, year, date, album, artist,
         genre, description, resolution, hdr, audio_channels, subtitles, last_seen
       ) VALUES (
         @server_id, @object_id, @parent_id, @title, @original_title, @type, @media_type,
         @url, @duration, @format, @video_codec, @audio_codec, @width, @height, @bitrate,
-        @mime_type, @size, @thumbnail, @season, @episode, @year, @date, @album, @artist,
+        @mime_type, @size, @thumbnail, @local_path, @season, @episode, @year, @date, @album, @artist,
         @genre, @description, @resolution, @hdr, @audio_channels, @subtitles, @last_seen
       )
       ON CONFLICT(server_id, object_id) DO UPDATE SET
@@ -138,6 +152,7 @@ const mediaRepo = {
         mime_type = excluded.mime_type,
         size = excluded.size,
         thumbnail = excluded.thumbnail,
+        local_path = excluded.local_path,
         season = excluded.season,
         episode = excluded.episode,
         year = excluded.year,

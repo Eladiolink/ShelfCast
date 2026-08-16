@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('node:path');
+const fs = require('node:fs');
 const config = require('../config/config.js');
 const logger = require('../config/logger.js');
 const db = require('../database/db.js');
@@ -9,7 +10,7 @@ const {
   genreRepo, personRepo, jobRepo, historyRepo, metadataCacheRepo, parseServices,
 } = require('../database/repositories.js');
 const { runDiscovery, addServerManually, fetchDeviceDescription, discoverOnce } = require('../dlna/discovery.js');
-const { scanServer, probeServerOnline } = require('../library/scanner.js');
+const { scanServer, scanFolder, probeServerOnline } = require('../library/scanner.js');
 const { MetadataManager, matchConfidence, isLikelyAnime } = require('../metadata/manager.js');
 const { identifyFilename, normalizeTitle } = require('../library/identify.js');
 const { handleStream, saveProgress, isSafeUrl, getTracks, streamSubtitle } = require('../playback/stream.js');
@@ -194,6 +195,32 @@ async function handleApi(req, res, { jobs, metadata, app }) {
     }
   }
 
+  // Adicionar uma pasta local do computador como fonte de mídia
+  if (p === '/api/servers/local' && method === 'POST') {
+    const body = await readBody(req);
+    const folderPath = String(body.path || '').trim();
+    if (!folderPath) return json(res, 400, { error: 'Informe o caminho da pasta' });
+    let resolved;
+    try {
+      resolved = path.resolve(folderPath);
+    } catch {
+      return json(res, 400, { error: 'Caminho inválido' });
+    }
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+      return json(res, 400, { error: 'Pasta não existe ou não é um diretório' });
+    }
+    const existing = serverRepo.findByPath(resolved);
+    if (existing) return json(res, 200, { server: decorateServer(existing), duplicate: true });
+    try {
+      const saved = serverRepo.createLocal(path.basename(resolved) || 'Pasta local', resolved);
+      const job = jobs.create({ type: 'library-scan', serverId: saved.id });
+      job.run((j) => scanFolder(saved.id, { job: j }));
+      return json(res, 200, { server: decorateServer(saved), jobId: job.id });
+    } catch (err) {
+      return json(res, 500, { error: err.message });
+    }
+  }
+
   // Diagnóstico: mostra quais dispositivos responderam ao SSDP
   if (p === '/api/servers/ssdp-debug' && method === 'POST') {
     try {
@@ -221,12 +248,12 @@ async function handleApi(req, res, { jobs, metadata, app }) {
     }
     if (action === 'scan' && method === 'POST') {
       const job = jobs.create({ type: 'library-scan', serverId: id });
-      job.run((j) => scanServer(id, { job: j }));
+      job.run((j) => (server.type === 'local' ? scanFolder(id, { job: j }) : scanServer(id, { job: j })));
       return json(res, 202, { jobId: job.id });
     }
     if (action === 'rescan' && method === 'POST') {
       const job = jobs.create({ type: 'library-rescan', serverId: id });
-      job.run((j) => scanServer(id, { job: j }));
+      job.run((j) => (server.type === 'local' ? scanFolder(id, { job: j }) : scanServer(id, { job: j })));
       return json(res, 202, { jobId: job.id });
     }
     if (!action && method === 'DELETE') {
@@ -242,8 +269,16 @@ async function handleApi(req, res, { jobs, metadata, app }) {
       return json(res, 200, { ok: true });
     }
     if (action === 'check' && method === 'POST') {
-      const online = await probeServerOnline(server);
-      serverRepo.setStatus(id, online ? 'online' : 'offline', online ? null : 'Sem resposta do ContentDirectory');
+      let online = false;
+      let err = null;
+      if (server.type === 'local') {
+        online = !!(server.path && fs.existsSync(server.path) && fs.statSync(server.path).isDirectory());
+        err = online ? null : 'Pasta não encontrada';
+      } else {
+        online = await probeServerOnline(server);
+        err = online ? null : 'Sem resposta do ContentDirectory';
+      }
+      serverRepo.setStatus(id, online ? 'online' : 'offline', err);
       return json(res, 200, { online, server: decorateServer(serverRepo.get(id)) });
     }
     return json(res, 404, { error: 'Rota não encontrada' });
@@ -682,6 +717,7 @@ function decorateServer(s) {
   return {
     ...s,
     online: s.status === 'online',
+    isLocal: s.type === 'local',
     services: Object.values(services || {}),
   };
 }

@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   isElectron: true,
+  pickFolder: () => ipcRenderer.invoke('dialog:pickFolder'),
   mpvAvailable: () => ipcRenderer.invoke('mpv:available'),
   playInMpv: (opts) => ipcRenderer.invoke('mpv:play', opts),
   stopMpv: () => ipcRenderer.invoke('mpv:stop'),

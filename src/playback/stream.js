@@ -2,6 +2,7 @@
 
 const http = require('node:http');
 const https = require('node:https');
+const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const config = require('../config/config.js');
 const logger = require('../config/logger.js');
@@ -81,8 +82,62 @@ function mimeFor(format) {
     mpg: 'video/mpeg', mpeg: 'video/mpeg', ts: 'video/mp2t',
     m2ts: 'video/mp2t', wmv: 'video/x-ms-wmv', flv: 'video/x-flv',
     ogv: 'video/ogg', ogg: 'video/ogg',
+    mp3: 'audio/mpeg', flac: 'audio/flac', wav: 'audio/wav',
+    m4a: 'audio/mp4', aac: 'audio/aac', oga: 'audio/ogg', opus: 'audio/opus',
+    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
   };
   return map[f] || 'video/mp4';
+}
+
+/**
+ * Serve um arquivo local (pasta do computador) com suporte a Range.
+ */
+function streamLocalFile({ res, filePath, range }) {
+  return new Promise((resolve, reject) => {
+    fs.stat(filePath, (err, stat) => {
+      if (err || !stat.isFile()) return reject(new Error('Arquivo local não encontrado'));
+      const total = stat.size;
+      let start = 0;
+      let end = total - 1;
+      if (range) {
+        const m = /^bytes=(\d*)-(\d*)$/.exec(range);
+        if (m) {
+          if (m[1]) start = parseInt(m[1], 10);
+          if (m[2]) end = Math.min(parseInt(m[2], 10), total - 1);
+          if (!m[1] && m[2]) start = Math.max(0, total - parseInt(m[2], 10)); // suffix
+        }
+        if (start >= total) {
+          res.statusCode = 416;
+          res.setHeader('Content-Range', `bytes */${total}`);
+          return res.end();
+        }
+      }
+      const chunksize = end - start + 1;
+      res.statusCode = range ? 206 : 200;
+      res.setHeader('Content-Type', mimeFor(pathExt(filePath)));
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Content-Length', chunksize);
+      res.setHeader('Cache-Control', 'no-cache');
+      if (range) res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
+      const stream = fs.createReadStream(filePath, { start, end });
+      stream.on('error', (e) => { try { res.destroy(); } catch { /* ok */ } reject(e); });
+      res.on('close', () => { try { stream.destroy(); } catch { /* ok */ } });
+      stream.pipe(res);
+      resolve({ proxied: true, statusCode: res.statusCode });
+    });
+  });
+}
+
+function pathExt(filePath) {
+  const dot = String(filePath || '').lastIndexOf('.');
+  return dot >= 0 ? String(filePath).slice(dot + 1) : '';
+}
+
+/**
+ * Fonte real de uma mídia: caminho local (quando existe) ou URL remota.
+ */
+function sourceOf(media) {
+  return media && media.local_path ? media.local_path : (media ? media.url : null);
 }
 
 function normalizeFormat(format) {
@@ -239,7 +294,9 @@ function probeStreams(url) {
  * Retorna { audio: [...], subtitles: [...] }.
  */
 async function getTracks(media) {
-  if (!media || !media.url || !isSafeUrl(media.url)) return { audio: [], subtitles: [], video: null };
+  const src = sourceOf(media);
+  if (!media || !src) return { audio: [], subtitles: [], video: null };
+  if (!media.local_path && !isSafeUrl(src)) return { audio: [], subtitles: [], video: null };
   const cacheKey = `tracks:v2:${media.id}`;
   const cached = metadataCacheRepo.get(cacheKey);
   if (cached && cached.fetched_at) {
@@ -248,7 +305,7 @@ async function getTracks(media) {
       try { return JSON.parse(cached.data); } catch { /* re-probe */ }
     }
   }
-  const streams = await probeStreams(media.url);
+  const streams = await probeStreams(src);
   const codecSet = (codec) => String(codec || '').toLowerCase();
   const audio = streams.filter((s) => s.type === 'audio').map((s) => ({
     index: s.index,
@@ -274,7 +331,8 @@ async function getTracks(media) {
  * mode='full'   -> re-encoda com libx264 + aac (lento, para codecs incompatíveis)
  */
 function streamTranscode({ res, media, range, mode = 'remux', audioIndex = null, start = null, audioInfo = null }) {
-  const { url } = media;
+  const url = sourceOf(media);
+  if (!url) return Promise.reject(new Error('Mídia sem fonte'));
   if (!config.FFMPEG_PATH) return Promise.reject(new Error('FFmpeg não configurado'));
 
   const startSec = start != null && start > 0 ? parseFloat(start) : 0;
@@ -361,8 +419,9 @@ function streamTranscode({ res, media, range, mode = 'remux', audioIndex = null,
 function streamSubtitle({ res, media, streamIndex = null, externalUri = null }) {
   return new Promise((resolve, reject) => {
     if (!config.FFMPEG_PATH) return reject(new Error('FFmpeg não configurado'));
-    const src = externalUri || media.url;
-    if (!isSafeUrl(src) && !externalUri) return reject(new Error('URL de mídia inválida'));
+    const src = externalUri || sourceOf(media);
+    if (!src) return reject(new Error('Mídia sem fonte'));
+    if (!externalUri && !media.local_path && !isSafeUrl(src)) return reject(new Error('URL de mídia inválida'));
     const args = ['-hide_banner', '-loglevel', 'error', '-i', src];
     if (streamIndex != null) args.push('-map', `0:${streamIndex}`);
     args.push('-c:s', 'webvtt', '-f', 'webvtt', 'pipe:1');
@@ -427,7 +486,12 @@ function videoNeedsTranscode(videoCodec, mediaCodec) {
 async function handleStream(req, res, { id, transcode, range, audio, start }) {
   const media = mediaRepo.get(id);
   if (!media) return { status: 404, body: 'Mídia não encontrada' };
-  if (!media.url || !isSafeUrl(media.url)) return { status: 400, body: 'Mídia sem URL válida' };
+  const src = sourceOf(media);
+  if (!src) return { status: 400, body: 'Mídia sem URL válida' };
+  if (media.local_path && (!fs.existsSync(media.local_path) || !fs.statSync(media.local_path).isFile())) {
+    return { status: 404, body: 'Arquivo local não encontrado' };
+  }
+  if (!media.local_path && !isSafeUrl(src)) return { status: 400, body: 'Mídia sem URL válida' };
 
   try {
     if (transcode === 'full') {
@@ -442,7 +506,11 @@ async function handleStream(req, res, { id, transcode, range, audio, start }) {
       return null;
     }
     if (canDirectPlay(media, req.headers.accept) && !videoNeedsTranscode(null, media.video_codec)) {
-      await streamDirect({ res, url: media.url, headers: {}, range });
+      if (media.local_path) {
+        await streamLocalFile({ res, filePath: media.local_path, range });
+      } else {
+        await streamDirect({ res, url: media.url, headers: {}, range });
+      }
       return null;
     }
     if (config.ENABLE_TRANSCODE) {
@@ -467,4 +535,4 @@ function saveProgress({ mediaItemId, position, duration, finished }) {
   historyRepo.save({ media_item_id: mediaItemId, position: position || 0, duration: duration || 0, finished: finished ? 1 : 0 });
 }
 
-module.exports = { handleStream, streamDirect, streamTranscode, streamSubtitle, getTracks, probeStreams, probeWithFfmpeg, canDirectPlay, mimeFor, saveProgress, isSafeUrl };
+module.exports = { handleStream, streamDirect, streamLocalFile, streamTranscode, streamSubtitle, getTracks, probeStreams, probeWithFfmpeg, canDirectPlay, mimeFor, sourceOf, saveProgress, isSafeUrl };

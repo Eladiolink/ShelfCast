@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 'use strict';
 
+const fs = require('node:fs');
 const config = require('./config/config.js');
 const logger = require('./config/logger.js');
 const db = require('./database/db.js');
 const { JobManager } = require('./jobs/job.js');
 const { createServer } = require('./server.js');
 const { runDiscovery, startPersistentListener } = require('./dlna/discovery.js');
-const { scanServer } = require('./library/scanner.js');
+const { scanServer, scanFolder } = require('./library/scanner.js');
 const { serverRepo, mediaRepo } = require('./database/repositories.js');
 
 const log = logger.child({ module: 'main' });
@@ -45,7 +46,8 @@ async function start() {
   const initial = serverRepo.list(true);
   if (initial.length) {
     for (const s of initial) {
-      jobs.create({ type: 'library-scan', serverId: s.id }).run((job) => scanServer(s.id, { job }));
+      const scan = (job) => (s.type === 'local' ? scanFolder(s.id, { job }) : scanServer(s.id, { job }));
+      jobs.create({ type: 'library-scan', serverId: s.id }).run(scan);
     }
   } else {
     log.info('nenhum servidor configurado ainda; aguardando descoberta');
@@ -55,7 +57,8 @@ async function start() {
   setInterval(() => {
     for (const s of serverRepo.list(true)) {
       if (s.paused) continue;
-      jobs.create({ type: 'library-scan', serverId: s.id }).run((job) => scanServer(s.id, { job }));
+      const scan = (job) => (s.type === 'local' ? scanFolder(s.id, { job }) : scanServer(s.id, { job }));
+      jobs.create({ type: 'library-scan', serverId: s.id }).run(scan);
     }
   }, config.SCAN_INTERVAL_MS).unref();
 
@@ -73,7 +76,14 @@ async function start() {
   setInterval(async () => {
     const { probeServerOnline } = require('./library/scanner.js');
     for (const s of serverRepo.list(true)) {
-      const online = await probeServerOnline(s).catch(() => false);
+      let online;
+      if (s.type === 'local') {
+        online = !!(s.path && fs.existsSync(s.path) && fs.statSync(s.path).isDirectory());
+        if (!online && s.status === 'online') serverRepo.setStatus(s.id, 'offline', 'Pasta não encontrada');
+        else if (online && s.status !== 'online') serverRepo.setStatus(s.id, 'online');
+        continue;
+      }
+      online = await probeServerOnline(s).catch(() => false);
       if (online && s.status !== 'online') serverRepo.setStatus(s.id, 'online');
       else if (!online && s.status === 'online') serverRepo.setStatus(s.id, 'offline', 'Servidor sem resposta');
     }

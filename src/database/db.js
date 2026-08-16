@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS servers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   uuid TEXT UNIQUE,
   name TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'dlna',
+  path TEXT,
   manufacturer TEXT,
   model TEXT,
   ip TEXT,
@@ -69,6 +71,7 @@ CREATE TABLE IF NOT EXISTS media_items (
   subtitles TEXT,
   metadata_status TEXT NOT NULL DEFAULT 'none',
   hidden INTEGER NOT NULL DEFAULT 0,
+  local_path TEXT,
   last_seen TEXT NOT NULL DEFAULT (datetime('now')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(server_id, object_id)
@@ -214,6 +217,9 @@ const MIGRATIONS = [
   ['manual_title', 'ALTER TABLE media_items ADD COLUMN manual_title TEXT'],
   ['custom_poster', 'ALTER TABLE media_items ADD COLUMN custom_poster TEXT'],
   ['custom_thumbnail', 'ALTER TABLE media_items ADD COLUMN custom_thumbnail TEXT'],
+  ['server_type', "ALTER TABLE servers ADD COLUMN type TEXT NOT NULL DEFAULT 'dlna'"],
+  ['server_path', 'ALTER TABLE servers ADD COLUMN path TEXT'],
+  ['media_local_path', 'ALTER TABLE media_items ADD COLUMN local_path TEXT'],
 ];
 
 function migrate() {

@@ -22,14 +22,15 @@ export function renderServers() {
 
     if (!servers.length) {
       page.innerHTML = `
-        <h1 class="page-title">Servidores DLNA</h1>
-        <div class="page-sub">Encontre e conecte-se a servidores de mídia na sua rede.</div>
+        <h1 class="page-title">Servidores e Pastas</h1>
+        <div class="page-sub">Encontre servidores DLNA na sua rede ou adicione pastas locais do computador.</div>
         <div class="discovery-box">
-          <div class="big">Nenhum servidor conectado ainda</div>
-          <div class="sub">A aplicação procura servidores DLNA automaticamente (multicast, broadcast e varredura da sub-rede). Se o seu servidor não aparecer, adicione-o manualmente pelo IP.</div>
+          <div class="big">Nenhuma fonte conectada ainda</div>
+          <div class="sub">A aplicação procura servidores DLNA automaticamente (multicast, broadcast e varredura da sub-rede). Você também pode adicionar uma pasta do computador como fonte de mídia.</div>
           <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
             <button class="btn btn-primary" id="discover-btn">${icon('search', 15)} Buscar servidores DLNA</button>
             <button class="btn btn-secondary" id="manual-btn">${icon('plus', 15)} Adicionar manualmente</button>
+            <button class="btn btn-secondary" id="local-btn">${icon('folder', 15)} Adicionar pasta local</button>
           </div>
           <div id="manual-form" class="hidden" style="margin-top:16px;text-align:left;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px;max-width:520px;margin-left:auto;margin-right:auto">
             <div style="font-weight:600;margin-bottom:8px">Adicionar servidor por IP</div>
@@ -40,26 +41,13 @@ export function renderServers() {
             </div>
             <div id="manual-result" style="margin-top:8px;font-size:13px;color:var(--text-dim)"></div>
           </div>
+          <div id="local-form" class="hidden" style="margin-top:16px;text-align:left;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px;max-width:520px;margin-left:auto;margin-right:auto">
+            <div style="font-weight:600;margin-bottom:8px">Adicionar pasta local</div>
+            ${localForm()}
+          </div>
         </div>
         ${jobHtml}`;
-      page.querySelector('#discover-btn').onclick = () => discover(page);
-      page.querySelector('#manual-btn').onclick = () => page.querySelector('#manual-form').classList.toggle('hidden');
-      page.querySelector('#manual-add').onclick = async () => {
-        const host = page.querySelector('#manual-host').value.trim();
-        const port = page.querySelector('#manual-port').value.trim();
-        const result = page.querySelector('#manual-result');
-        if (!host) { result.textContent = 'Informe o IP.'; return; }
-        result.textContent = 'Procurando dispositivo UPnP…';
-        try {
-          const r = await api.post('/api/servers/manual', { host, port: port || undefined });
-          result.innerHTML = `${icon('check', 14)} ${esc(r.server.name)} adicionado!`;
-          toast(`Servidor ${r.server.name} adicionado`, 'success');
-          renderServers();
-        } catch (e) {
-          result.innerHTML = `${icon('x', 14)} ${esc(e.message)}`;
-          toast(e.message, 'error');
-        }
-      };
+      bindCommonActions(page, () => renderServers());
       return;
     }
 
@@ -69,7 +57,9 @@ export function renderServers() {
           <div class="server-status-dot ${statusDot(s)}"></div>
           <div style="flex:1;min-width:0">
             <div class="server-name">${esc(s.name)}</div>
-            <div class="server-sub">${esc([s.manufacturer, s.model].filter(Boolean).join(' · ')) || 'Servidor DLNA'} · ${esc(s.ip || '')}</div>
+            <div class="server-sub">${s.isLocal
+              ? `${icon('folder', 12)} Pasta local · ${esc(s.path || '')}`
+              : `${esc([s.manufacturer, s.model].filter(Boolean).join(' · ')) || 'Servidor DLNA'} · ${esc(s.ip || '')}`}</div>
           </div>
           <button class="icon-btn" data-act="refresh" title="Atualizar">${icon('refresh-cw', 16)}</button>
           <button class="icon-btn" data-act="delete" title="Remover">${icon('trash-2', 16)}</button>
@@ -88,11 +78,12 @@ export function renderServers() {
       </div>`).join('');
 
     page.innerHTML = `
-      <h1 class="page-title">Servidores DLNA</h1>
-      <div class="page-sub">Servidores de mídia disponíveis na sua rede local.</div>
+      <h1 class="page-title">Servidores e Pastas</h1>
+      <div class="page-sub">Servidores DLNA na rede e pastas locais do computador.</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">
         <button class="btn btn-primary" id="discover-btn">${icon('search', 15)} Buscar servidores DLNA</button>
         <button class="btn btn-secondary" id="manual-btn">${icon('plus', 15)} Adicionar manualmente</button>
+        <button class="btn btn-secondary" id="local-btn">${icon('folder', 15)} Adicionar pasta local</button>
       </div>
       <div id="manual-form" class="hidden" style="background:var(--bg-elev);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:18px;max-width:520px">
         <div style="font-weight:600;margin-bottom:8px">Adicionar servidor por IP</div>
@@ -103,28 +94,13 @@ export function renderServers() {
         </div>
         <div id="manual-result" style="margin-top:8px;font-size:13px;color:var(--text-dim)"></div>
       </div>
+      <div id="local-form" class="hidden" style="background:var(--bg-elev);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:18px;max-width:520px">
+        ${localForm()}
+      </div>
       ${jobHtml}
       ${cards}`;
 
-    page.querySelector('#discover-btn').onclick = () => discover(page);
-    page.querySelector('#manual-btn').onclick = () => page.querySelector('#manual-form').classList.toggle('hidden');
-    page.querySelector('#manual-add').onclick = async () => {
-      const host = page.querySelector('#manual-host').value.trim();
-      const port = page.querySelector('#manual-port').value.trim();
-      const result = page.querySelector('#manual-result');
-      if (!host) { result.textContent = 'Informe o IP.'; return; }
-      result.textContent = 'Procurando dispositivo UPnP…';
-      try {
-          const r = await api.post('/api/servers/manual', { host, port: port || undefined });
-          result.innerHTML = `${icon('check', 14)} ${esc(r.server.name)} adicionado!`;
-          toast(`Servidor ${r.server.name} adicionado`, 'success');
-          load();
-        } catch (e) {
-          result.innerHTML = `${icon('x', 14)} ${esc(e.message)}`;
-          toast(e.message, 'error');
-        }
-    };
-
+    bindCommonActions(page, load);
     page.querySelectorAll('.server-card').forEach((card) => {
       const id = parseInt(card.dataset.server, 10);
       card.querySelectorAll('[data-act]').forEach((btn) => {
@@ -136,7 +112,7 @@ export function renderServers() {
               if (r.jobId) toast('Varredura da biblioteca em andamento…', 'info');
             }).catch((e) => toast(e.message, 'error'));
           } else if (act === 'delete') {
-            if (confirm(`Remover servidor "${card.querySelector('.server-name').textContent}"? A biblioteca local será preservada.`)) {
+            if (confirm(`Remover "${card.querySelector('.server-name').textContent}"? A biblioteca local será preservada.`)) {
               await api.del(`/api/servers/${id}`);
               load();
             }
@@ -145,7 +121,7 @@ export function renderServers() {
           } else if (act === 'check') {
             toast('Verificando conectividade…', 'info');
             const r = await api.post(`/api/servers/${id}/check`);
-            toast(r.online ? 'Servidor online' : 'Servidor offline', r.online ? 'success' : 'error');
+            toast(r.online ? 'Fonte disponível' : 'Fonte indisponível', r.online ? 'success' : 'error');
             load();
           } else if (act === 'pause') {
             await api.post(`/api/servers/${id}/pause`);
@@ -157,6 +133,82 @@ export function renderServers() {
   }
 
   load();
+}
+
+function localForm() {
+  const usesPicker = !!(window.electronAPI && window.electronAPI.pickFolder);
+  return `
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <input id="local-path" type="text" placeholder="/media/Filmes ou C:\\Media" style="flex:1;min-width:200px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:9px 12px" ${usesPicker ? 'readonly placeholder="Clique em Selecionar…"' : ''}>
+      ${usesPicker ? `<button class="btn btn-secondary" id="local-pick">${icon('folder', 14)} Selecionar…</button>` : ''}
+      <button class="btn btn-primary" id="local-add">Adicionar</button>
+    </div>
+    <div id="local-result" style="margin-top:8px;font-size:13px;color:var(--text-dim)"></div>
+    ${usesPicker ? '' : '<div style="margin-top:6px;font-size:12px;color:var(--text-dim)">Digite o caminho absoluto da pasta no computador.</div>'}`;
+}
+
+function bindCommonActions(page, reload) {
+  page.querySelector('#discover-btn').onclick = () => discover(page);
+  page.querySelector('#manual-btn').onclick = () => page.querySelector('#manual-form').classList.toggle('hidden');
+  page.querySelector('#manual-add').onclick = async () => {
+    const host = page.querySelector('#manual-host').value.trim();
+    const port = page.querySelector('#manual-port').value.trim();
+    const result = page.querySelector('#manual-result');
+    if (!host) { result.textContent = 'Informe o IP.'; return; }
+    result.textContent = 'Procurando dispositivo UPnP…';
+    try {
+      const r = await api.post('/api/servers/manual', { host, port: port || undefined });
+      result.innerHTML = `${icon('check', 14)} ${esc(r.server.name)} adicionado!`;
+      toast(`Servidor ${r.server.name} adicionado`, 'success');
+      reload();
+    } catch (e) {
+      result.innerHTML = `${icon('x', 14)} ${esc(e.message)}`;
+      toast(e.message, 'error');
+    }
+  };
+
+  const localBtn = page.querySelector('#local-btn');
+  const localFormEl = page.querySelector('#local-form');
+  if (localBtn && localFormEl) {
+    localBtn.onclick = () => {
+      localFormEl.classList.toggle('hidden');
+      if (!localFormEl.classList.contains('hidden') && window.electronAPI && window.electronAPI.pickFolder) {
+        pickLocalFolder(page, reload);
+      }
+    };
+  }
+  const pickBtn = page.querySelector('#local-pick');
+  if (pickBtn) pickBtn.onclick = () => pickLocalFolder(page, reload);
+  page.querySelector('#local-add').onclick = () => addLocalFolder(page, reload);
+}
+
+async function pickLocalFolder(page, reload) {
+  try {
+    const folderPath = await window.electronAPI.pickFolder();
+    if (folderPath) {
+      page.querySelector('#local-path').value = folderPath;
+      addLocalFolder(page, reload);
+    }
+  } catch (e) {
+    toast(`Erro ao selecionar pasta: ${e.message}`, 'error');
+  }
+}
+
+async function addLocalFolder(page, reload) {
+  const folderPath = page.querySelector('#local-path').value.trim();
+  const result = page.querySelector('#local-result');
+  if (!folderPath) { result.textContent = 'Informe o caminho da pasta.'; return; }
+  result.textContent = 'Adicionando pasta local…';
+  try {
+    const r = await api.post('/api/servers/local', { path: folderPath });
+    result.innerHTML = `${icon('check', 14)} Pasta "${esc(r.server.name)}" adicionada!`;
+    toast(`Pasta ${r.server.name} adicionada`, 'success');
+    if (r.jobId) toast('Varredura da pasta em andamento…', 'info');
+    reload();
+  } catch (e) {
+    result.innerHTML = `${icon('x', 14)} ${esc(e.message)}`;
+    toast(e.message, 'error');
+  }
 }
 
 function statusDot(s) {

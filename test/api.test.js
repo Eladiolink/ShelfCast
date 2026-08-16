@@ -18,7 +18,7 @@ const db = require('../src/database/db.js');
 const { serverRepo, mediaRepo } = require('../src/database/repositories.js');
 const { JobManager } = require('../src/jobs/job.js');
 const { createServer } = require('../src/server.js');
-const { scanServer } = require('../src/library/scanner.js');
+const { scanServer, scanFolder } = require('../src/library/scanner.js');
 
 let server;
 let baseUrl;
@@ -154,4 +154,47 @@ test('servidor serve index.html', async () => {
   const r = await req('GET', '/');
   assert.equal(r.status, 200);
   assert.match(r.raw, /Media Library/);
+});
+
+test('POST /api/servers/local adiciona pasta local e reusa duplicada', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'ml-local-'));
+  const r = await req('POST', '/api/servers/local', { path: folder });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.server.isLocal, true);
+  assert.equal(r.body.server.type, 'local');
+  assert.equal(r.body.server.path, path.resolve(folder));
+  assert.ok(r.body.jobId);
+
+  const dup = await req('POST', '/api/servers/local', { path: folder });
+  assert.equal(dup.status, 200);
+  assert.equal(dup.body.duplicate, true);
+
+  // Pasta inexistente → 400
+  const bad = await req('POST', '/api/servers/local', { path: path.join(os.tmpdir(), 'nao-existe-xyz') });
+  assert.equal(bad.status, 400);
+});
+
+test('scanFolder varre pasta local e persiste mídia', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'ml-scan-'));
+  const sub = path.join(folder, 'Filmes');
+  fs.mkdirSync(sub);
+  fs.writeFileSync(path.join(sub, 'The Matrix 1999 1080p.mkv'), 'fake-video-data');
+  fs.writeFileSync(path.join(sub, 'ignored.txt'), 'not media');
+
+  const local = serverRepo.createLocal('LocalTest', folder);
+  const job = new (require('../src/jobs/job.js').JobManager)({ maxConcurrent: 1 }).create({ type: 'library-scan', serverId: local.id });
+  await job.run((j) => scanFolder(local.id, { job: j }));
+
+  const items = mediaRepo.list({ serverId: local.id, hidden: 'all' }).items;
+  assert.ok(items.length >= 1);
+  const video = items.find((i) => i.title.includes('Matrix'));
+  assert.ok(video, 'arquivo de vídeo deveria ser indexado');
+  assert.ok(video.local_path, 'deveria guardar o caminho local');
+  assert.match(video.object_id, /Filmes\//);
+  assert.equal(video.mime_type, 'video/x-matroska');
+
+  // Sincronização novamente não deve criar duplicatas
+  const second = await job.run((j) => scanFolder(local.id, { job: j }));
+  const items2 = mediaRepo.list({ serverId: local.id, hidden: 'all' }).items;
+  assert.equal(items2.length, items.length);
 });
