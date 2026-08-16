@@ -12,6 +12,10 @@ const log = logger.child({ module: 'playback' });
 const TEXT_SUB_CODECS = new Set(['subrip', 'srt', 'ass', 'ssa', 'mov_text', 'webvtt', 'text', 'eia_608', 'eia_708']);
 const IMAGE_SUB_CODECS = new Set(['hdmv_pgs_subtitle', 'pgssub', 'dvd_subtitle', 'dvdsub', 'dvb_subtitle', 'xsub', 'vobsub']);
 
+// Codecs de áudio que o Chromium/Electron decodifica nativamente e podem ser
+// copiados sem re-encode (perda zero).
+const COPY_AUDIO_CODECS = new Set(['aac', 'mp3', 'opus']);
+
 function isSafeUrl(raw) {
   try {
     const u = new URL(raw);
@@ -85,6 +89,24 @@ function normalizeFormat(format) {
   const f = String(format || '').toLowerCase();
   const map = { 'x-matroska': 'mkv', 'matroska': 'mkv', 'x-msvideo': 'avi', 'x-ms-wmv': 'wmv', 'x-flv': 'flv', 'mp2t': 'ts', 'quicktime': 'mov' };
   return map[f] || f;
+}
+
+/**
+ * Monta os argumentos de codificação de áudio do FFmpeg com a melhor qualidade
+ * possível: copia codecs já suportados (AAC/MP3/Opus) e, para os demais
+ * (DTS/AC3/EAC3/TrueHD/FLAC), re-encoda para AAC preservando os canais e com
+ * bitrate proporcional (192k estéreo, 384k 3-5ch, 512k 5.1).
+ */
+function buildAudioArgs(audioInfo) {
+  const codec = String((audioInfo && audioInfo.codec) || '').toLowerCase();
+  if (COPY_AUDIO_CODECS.has(codec)) {
+    return ['-c:a', 'copy'];
+  }
+  const ch = audioInfo && audioInfo.channels
+    ? Math.min(Math.max(parseInt(audioInfo.channels, 10), 1), 6)
+    : 2;
+  const bitrate = ch >= 6 ? 512 : ch >= 3 ? 384 : ch === 2 ? 192 : 128;
+  return ['-c:a', 'aac', '-b:a', `${bitrate}k`, '-ac', String(ch)];
 }
 
 function canDirectPlay(media, acceptHeader = '') {
@@ -200,7 +222,7 @@ async function getTracks(media) {
  * mode='remux'  -> copia codecs (rápido, ideal para MKV H.264)
  * mode='full'   -> re-encoda com libx264 + aac (lento, para codecs incompatíveis)
  */
-function streamTranscode({ res, media, range, mode = 'remux', audioIndex = null, start = null }) {
+function streamTranscode({ res, media, range, mode = 'remux', audioIndex = null, start = null, audioInfo = null }) {
   return new Promise((resolve, reject) => {
     const { url } = media;
     if (!config.FFMPEG_PATH) return reject(new Error('FFmpeg não configurado'));
@@ -220,19 +242,19 @@ function streamTranscode({ res, media, range, mode = 'remux', audioIndex = null,
     const effectiveMode = startSec > 0 ? 'full' : mode;
 
     const audioMap = audioIndex != null && audioIndex !== '' ? `0:${audioIndex}` : '0:a:0?';
+    const audioArgs = buildAudioArgs(audioInfo);
 
     if (effectiveMode === 'full') {
       args.push(
-        '-map', '0:v:0', '-map', audioMap, '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
-        '-crf', '23', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+        '-map', '0:v:0', '-map', audioMap, '-c:v', 'libx264', '-preset', 'faster',
+        '-crf', '18', '-pix_fmt', 'yuv420p', ...audioArgs,
         '-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', '-'
       );
     } else {
-      // Remux: copia o vídeo (rápido), mas re-encoda o áudio para AAC estéreo.
-      // MKVs costumam trazer DTS/AC3/EAC3/TrueHD/FLAC, que o Chromium do Electron
-      // não decodifica — com "-c copy" o vídeo tocaria sem som.
+      // Remux: copia o vídeo (rápido, sem perda). O áudio é copiado quando
+      // compatível (AAC/MP3/Opus) ou re-encodado para AAC multicanal quando não.
       args.push(
-        '-map', '0:v:0', '-map', audioMap, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+        '-map', '0:v:0', '-map', audioMap, '-c:v', 'copy', ...audioArgs,
         '-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', '-'
       );
     }
@@ -297,6 +319,25 @@ function streamSubtitle({ res, media, streamIndex = null, externalUri = null }) 
 }
 
 /**
+ * Descobre o codec/canais da faixa de áudio selecionada para decidir a melhor
+ * codificação (copiar AAC/MP3/Opus ou re-encodar os demais preservando canais).
+ * Usa o cache de 24h do getTracks; retorna null se a sondagem falhar.
+ */
+async function audioInfoFor(media, audioIndex) {
+  try {
+    const tracks = await getTracks(media);
+    const list = (tracks && tracks.audio) || [];
+    if (audioIndex != null) {
+      const found = list.find((a) => a.index === audioIndex);
+      if (found) return found;
+    }
+    return list[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Endpoint principal de streaming.
  * transcode: 'remux' | 'full' | undefined (auto: direct ou remux)
  * audio: índice absoluto da faixa de áudio (0:N)
@@ -309,11 +350,11 @@ async function handleStream(req, res, { id, transcode, range, audio, start }) {
 
   try {
     if (transcode === 'full') {
-      await streamTranscode({ res, media, range, mode: 'full', audioIndex: audio, start });
+      await streamTranscode({ res, media, range, mode: 'full', audioIndex: audio, start, audioInfo: await audioInfoFor(media, audio) });
       return null;
     }
     if (transcode === 'remux') {
-      await streamTranscode({ res, media, range, mode: 'remux', audioIndex: audio, start });
+      await streamTranscode({ res, media, range, mode: 'remux', audioIndex: audio, start, audioInfo: await audioInfoFor(media, audio) });
       return null;
     }
     if (canDirectPlay(media, req.headers.accept)) {
@@ -322,7 +363,7 @@ async function handleStream(req, res, { id, transcode, range, audio, start }) {
     }
     if (config.ENABLE_TRANSCODE) {
       // Formato que o navegador não reproduz: remux rápido primeiro
-      await streamTranscode({ res, media, range, mode: 'remux', audioIndex: audio, start });
+      await streamTranscode({ res, media, range, mode: 'remux', audioIndex: audio, start, audioInfo: await audioInfoFor(media, audio) });
       return null;
     }
     return { status: 415, body: 'Formato não suportado pelo navegador e transcoding desativado' };
