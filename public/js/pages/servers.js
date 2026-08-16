@@ -180,6 +180,21 @@ function bindCommonActions(page, reload) {
   const pickBtn = page.querySelector('#local-pick');
   if (pickBtn) pickBtn.onclick = () => pickLocalFolder(page, reload);
   page.querySelector('#local-add').onclick = () => addLocalFolder(page, reload);
+
+  page.querySelectorAll('[data-cancel]').forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.dataset.cancel;
+      btn.disabled = true;
+      btn.textContent = 'Cancelando…';
+      try {
+        const r = await api.post(`/api/jobs/${id}/cancel`);
+        toast(r.ok ? 'Sincronização cancelada' : 'Não foi possível cancelar', r.ok ? 'success' : 'error');
+      } catch (e) {
+        toast(`Erro ao cancelar: ${e.message}`, 'error');
+      }
+      reload();
+    };
+  });
 }
 
 async function pickLocalFolder(page, reload) {

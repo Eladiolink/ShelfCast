@@ -39,6 +39,8 @@ class VideoPlayer {
     this.muted = false;
     this._audioCtx = null;
     this._gainNode = null;
+    this._fsBound = false;
+    this._pendingClose = false;
     if (window.electronAPI && window.electronAPI.onMpvClosed) {
       window.electronAPI.onMpvClosed((data) => {
         if (this._mpvCloseCb) this._mpvCloseCb(data);
@@ -134,6 +136,8 @@ class VideoPlayer {
     back.onclick = () => this.close();
     transcodeBtn.onclick = () => this._reloadWithTranscode();
 
+    this._bindFullscreen();
+
     progress.onclick = (e) => {
       const rect = progress.getBoundingClientRect();
       const ratio = (e.clientX - rect.left) / rect.width;
@@ -175,7 +179,14 @@ class VideoPlayer {
       this._onEnded();
     });
 
-    this.video.addEventListener('waiting', () => { toast('Buffering…', 'info'); });
+    const buffer = this.overlay.querySelector('.player-buffer');
+    const showBuffer = (on) => {
+      if (buffer) buffer.classList.toggle('hidden', !on);
+    };
+    this.video.addEventListener('waiting', () => showBuffer(true));
+    this.video.addEventListener('playing', () => showBuffer(false));
+    this.video.addEventListener('canplay', () => showBuffer(false));
+    this.video.addEventListener('pause', () => showBuffer(false));
     this.video.addEventListener('error', () => {
       const directOk = this.media && this._directOk();
       if (!this.played && !directOk && !this._remuxTried) {
@@ -198,7 +209,14 @@ class VideoPlayer {
     this.overlay.addEventListener('mouseleave', () => this._hideUi());
 
     document.addEventListener('keydown', this._onKey = (e) => {
-      if (e.key === 'Escape') this.close();
+      if (e.key === 'Escape') {
+        if (document.fullscreenElement) {
+          e.preventDefault();
+          document.exitFullscreen().catch(() => {});
+        } else {
+          this.close();
+        }
+      }
       else if (e.key === ' ' || e.key === 'k') { e.preventDefault(); playPause.onclick(); }
       else if (e.key === 'ArrowRight') this._seekTo((this.video.currentTime || 0) + (this.startOffset || 0) + 10);
       else if (e.key === 'ArrowLeft') this._seekTo((this.video.currentTime || 0) + (this.startOffset || 0) - 10);
@@ -222,6 +240,21 @@ class VideoPlayer {
     const canTranscode = this.media && !this._directOk();
     if (canTranscode) transcodeBtn.classList.remove('hidden');
     transcodeBtn.title = 'Transcodificar com FFmpeg';
+  }
+
+  _bindFullscreen() {
+    if (this._fsBound) return;
+    this._fsBound = true;
+    document.addEventListener('fullscreenchange', () => {
+      if (!document.fullscreenElement) {
+        // Ao sair da tela cheia, garante que a UI volta a aparecer
+        this._showUi();
+        if (this._pendingClose) {
+          this._pendingClose = false;
+          this.close();
+        }
+      }
+    });
   }
 
   _directOk() {
@@ -285,6 +318,7 @@ class VideoPlayer {
     this.startOffset = 0;
     this.overlay.innerHTML = `
       <video class="video-player" playsinline></video>
+      <div class="player-buffer hidden"><div class="spinner spinner-lg"></div></div>
       <div class="player-ui">
         <div class="player-top">
           <button class="player-back" title="Voltar">${icon('arrow-left', 18)}</button>
@@ -511,21 +545,32 @@ class VideoPlayer {
   }
 
   _showUi() {
+    if (!this.ui) return;
     this.hidden = false;
     this.ui.style.opacity = '1';
+    this.overlay.style.cursor = 'default';
     clearTimeout(this.hideTimer);
     this.hideTimer = setTimeout(() => {
-      if (!this.video.paused) this._hideUi();
+      if (this.video && !this.video.paused) this._hideUi();
     }, 3000);
   }
 
   _hideUi() {
-    if (this.hidden) return;
+    if (this.hidden || !this.ui) return;
     this.hidden = true;
     this.ui.style.opacity = '0';
+    this.overlay.style.cursor = 'none';
   }
 
   close() {
+    if (document.fullscreenElement) {
+      // Fecha primeiro a tela cheia para não esconder o elemento fullscreen
+      // (o que travaria a janela no Chromium/Electron). O fechamento real
+      // acontece no handler de fullscreenchange.
+      this._pendingClose = true;
+      document.exitFullscreen().catch(() => { this._pendingClose = false; this.close(); });
+      return;
+    }
     this._save(false);
     document.removeEventListener('keydown', this._onKey);
     this.overlay.classList.add('hidden');

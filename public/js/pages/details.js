@@ -23,7 +23,10 @@ export async function renderDetails(id) {
   const backdrop = m.backdrop || movie?.backdrop_path || null;
 
   const backdropHtml = backdrop ? `<div class="detail-backdrop" style="background-image:url('/data/${backdrop}')"></div>` : '';
-  const posterHtml = `<div class="detail-poster"><img src="${poster ? `/data/${poster}` : '/placeholder.svg'}" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'"><div class="no-poster" style="display:none">${icon('play', 44)}</div></div>`;
+  // Sem pôster de metadados, usa o endpoint de thumbnail (que serve o thumbnail
+  // do DLNA, baixando/cacheando quando for URL remota).
+  const posterSrc = poster ? `/data/${poster}` : `/api/media/${id}/thumbnail`;
+  const posterHtml = `<div class="detail-poster"><img src="${posterSrc}" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'"><div class="no-poster" style="display:none">${icon('play', 44)}</div></div>`;
 
   const starChip = (r) => `<span class="chip chip-accent">${icon('star', 12)} ${Number(r).toFixed(1)}</span>`;
 

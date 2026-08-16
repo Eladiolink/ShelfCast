@@ -127,6 +127,13 @@ class JobManager {
       this.queue = this.queue.filter((j) => j.id !== id);
       return true;
     }
+    // Job não está em memória (ex: processo reiniciado deixou o status
+    // 'running' no banco). Marca como cancelado para sumir da lista.
+    const row = jobRepo.get(id);
+    if (row && row.status === 'running') {
+      jobRepo.finish(id, 'cancelled', 'Cancelado');
+      return true;
+    }
     return false;
   }
 }

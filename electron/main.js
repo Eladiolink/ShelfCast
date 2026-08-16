@@ -132,6 +132,14 @@ function createWindow() {
     app.isQuitting = true;
   });
   mainWindow.on('closed', () => { mainWindow = null; });
+
+  // Em algumas distros Linux, sair do HTML fullscreen deixa a janela presa em
+  // tela cheia e sem responder. Força a restauração nesse caso.
+  mainWindow.on('leave-html-full-screen', () => {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isFullScreen()) {
+      mainWindow.setFullScreen(false);
+    }
+  });
 }
 
 function createTray() {

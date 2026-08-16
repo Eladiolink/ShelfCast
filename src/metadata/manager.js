@@ -102,7 +102,14 @@ function similarity(a, b) {
   if (!na || !nb) return 0;
   if (na === nb) return 1;
   if (na.includes(nb) || nb.includes(na)) {
-    return Math.min(na.length, nb.length) / Math.max(na.length, nb.length) * 0.95;
+    // Contenção: se um título é prefixo/sufixo alinhado por palavra do outro
+    // (ex: "Ponyo" vs "Ponyo - Uma Amizade que Veio do Mar"), é um bom casamento.
+    const short = na.length <= nb.length ? na : nb;
+    const long = na.length <= nb.length ? nb : na;
+    const idx = long.indexOf(short);
+    const aligned = idx === 0 || /[\s\-:.,;()[\]_/]/.test(long[idx - 1]);
+    if (aligned) return 0.85 + 0.1 * (short.length / long.length);
+    return Math.min(short.length, long.length) / Math.max(short.length, long.length) * 0.95;
   }
   const dist = levenshtein(na, nb);
   const maxLen = Math.max(na.length, nb.length);
@@ -378,6 +385,9 @@ class MetadataManager {
     const scored = dedupeCandidates(candidates)
       .map((c) => ({ c, score: matchConfidence({ title: identify.title, year: identify.year, type: 'movie' }, c) }))
       .sort((a, b) => b.score - a.score);
+    // Prefere sempre o TMDB (título no idioma configurado) quando ele tem um
+    // casamento decente; o fallback (AniList/Jikan, títulos em inglês) só entra
+    // quando o TMDB não encontrou nada razoável.
     let best = scored[0] || null;
     if (!best || best.score < 0.6) {
       const fb = (await this._searchMovieFallback(identify.title, identify.year)) || [];
@@ -385,13 +395,16 @@ class MetadataManager {
         .map((c) => ({ c, score: fallbackScore(identify, c) }))
         .sort((a, b) => b.score - a.score);
       const fbBest = fbScored[0];
-      if (fbBest && fbBest.score >= 0.5 && (!best || fbBest.score >= best.score)) {
+      if (fbBest && fbBest.score >= 0.5 && (!best || fbBest.score > best.score)) {
         best = fbBest;
       }
     }
 
     if (best && (best.score >= 0.6 || best.c.provider !== 'tmdb')) {
-      this.cache.set(cacheKey, 'movie', best.c);
+      // Só guarda em cache o resultado do TMDB (título no idioma configurado);
+      // fallbacks (AniList/Jikan) aplicam títulos em inglês e não devem
+      // "envenenar" o cache, para permitir re-casamento quando o TMDB voltar.
+      if (best.c.provider === 'tmdb') this.cache.set(cacheKey, 'movie', best.c);
       await this._applyMovie(mediaItem.id, best.c);
       return best.c;
     }
@@ -537,15 +550,15 @@ class MetadataManager {
   }
 
   async enrich(mediaItem, identify) {
-    if (!this.enabled) return;
+    if (!this.enabled) return null;
     try {
       if (identify.type === 'movie') {
-        await this.fetchMovie(mediaItem, identify);
-      } else {
-        await this.fetchSeries(mediaItem, identify);
+        return await this.fetchMovie(mediaItem, identify);
       }
+      return await this.fetchSeries(mediaItem, identify);
     } catch (err) {
       log.warn('falha no enriquecimento de metadados', { id: mediaItem.id, title: identify.title, err: err.message });
+      return null;
     }
   }
 }

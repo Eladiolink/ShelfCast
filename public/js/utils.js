@@ -51,6 +51,7 @@ export function posterFor(media) {
   if (media.custom_thumbnail) return `/data/${media.custom_thumbnail}`;
   if (media.poster) return `/data/${media.poster}`;
   if (media.thumbnail && /^https?:/.test(media.thumbnail)) return media.thumbnail;
+  if (media.thumbnail && /^thumbnails\//.test(media.thumbnail)) return `/data/${media.thumbnail}`;
   return '/placeholder.svg';
 }
 

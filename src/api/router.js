@@ -570,7 +570,7 @@ async function handleApi(req, res, { jobs, metadata, app }) {
       const m = mediaRepo.get(id);
       if (!m) return json(res, 404, { error: 'Mídia não encontrada' });
       try {
-        const identify = identifyFilename(m.title);
+        const identify = identifyFilename(m.manual_title || m.title);
         metadataCacheRepo.clearByTitle(identify.title);
         const metadata = new MetadataManager();
         if (!metadata.enabled) return json(res, 200, { ok: false, error: 'Metadados desativados nas configurações' });

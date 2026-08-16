@@ -2,6 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const config = require('../config/config.js');
 const logger = require('../config/logger.js');
@@ -59,6 +60,50 @@ function probeLocalFile(filePath) {
 }
 
 /**
+ * Gera um thumbnail para um vídeo local com ffmpeg (frame ~10% da duração),
+ * salvando em data/thumbnails/. Retorna o caminho relativo (ex: thumbnails/abc.jpg)
+ * ou null em caso de falha. Se o arquivo já existe, retorna o caminho direto.
+ */
+function generateLocalThumbnail(filePath, duration) {
+  return new Promise((resolve) => {
+    const hash = crypto.createHash('sha1').update(filePath).digest('hex');
+    const rel = `thumbnails/${hash}.jpg`;
+    const dest = path.join(config.DATA_DIR, rel);
+    if (fs.existsSync(dest)) return resolve(rel);
+    const seek = duration ? Math.min(Math.max(duration * 0.1, 0), 600) : 10;
+    const args = ['-hide_banner', '-loglevel', 'error', '-ss', String(seek), '-i', filePath,
+      '-frames:v', '1', '-vf', 'scale=480:-2', '-q:v', '4', '-y', dest];
+    let child;
+    try {
+      child = spawn(config.FFMPEG_PATH, args, { stdio: ['ignore', 'ignore', 'ignore'] });
+    } catch {
+      return resolve(null);
+    }
+    child.on('error', () => resolve(null));
+    child.on('close', (code) => {
+      resolve(code === 0 && fs.existsSync(dest) ? rel : null);
+    });
+  });
+}
+
+/**
+ * Copia uma imagem local para data/thumbnails/ (usada como thumbnail de imagens).
+ */
+function copyImageThumbnail(filePath) {
+  const hash = crypto.createHash('sha1').update(filePath).digest('hex');
+  const ext = path.extname(filePath).toLowerCase() || '.jpg';
+  const rel = `thumbnails/${hash}${ext}`;
+  const dest = path.join(config.DATA_DIR, rel);
+  if (fs.existsSync(dest)) return rel;
+  try {
+    fs.copyFileSync(filePath, dest);
+    return rel;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Varre uma pasta local (recursivamente) e persiste a mídia encontrada,
  * sondando metadados técnicos com ffprobe e identificando filmes/séries.
  */
@@ -112,6 +157,10 @@ async function scanFolder(folderId, { job } = {}) {
       const format = ext.slice(1);
       const baseName = entry.name.replace(/\.[A-Za-z0-9]{2,4}$/, '');
       const resolution = classifyResolution(videoStream ? videoStream.width : 0, videoStream ? videoStream.height : 0);
+      const duration = probe && probe.format && probe.format.duration ? parseFloat(probe.format.duration) : null;
+      const thumb = isVideo
+        ? await generateLocalThumbnail(full, duration)
+        : isImage ? copyImageThumbnail(full) : null;
 
       const row = {
         server_id: folderId,
@@ -123,7 +172,7 @@ async function scanFolder(folderId, { job } = {}) {
         media_type: isVideo ? 'video' : isAudio ? 'audio' : 'other',
         url: null,
         local_path: full,
-        duration: probe && probe.format && probe.format.duration ? parseFloat(probe.format.duration) : null,
+        duration,
         format,
         video_codec: videoStream ? videoStream.codec_name : null,
         audio_codec: audioStream ? audioStream.codec_name : null,
@@ -132,7 +181,7 @@ async function scanFolder(folderId, { job } = {}) {
         bitrate: null,
         mime_type: mimeForExt(ext),
         size: probe && probe.format && probe.format.size ? parseInt(probe.format.size, 10) : null,
-        thumbnail: null,
+        thumbnail: thumb,
         season: null,
         episode: null,
         year: null,
@@ -171,7 +220,8 @@ async function scanFolder(folderId, { job } = {}) {
       mediaRepo.setMetadataStatus(id, 'skipped');
       continue;
     }
-    const identify = identifyFilename(title);
+    const m = mediaRepo.get(id);
+    const identify = identifyFilename(m.manual_title || title);
     mediaRepo.updateMetadata(id, {
       normalized_title: normalizeTitle(title),
       season: identify.season ?? undefined,
@@ -184,7 +234,6 @@ async function scanFolder(folderId, { job } = {}) {
     });
     identified++;
     if (config.ENABLE_METADATA) {
-      const m = mediaRepo.get(id);
       await fetchMetadataForMedia(metadata, m, identify, job);
       enriched++;
     }
@@ -209,8 +258,8 @@ async function fetchMetadataForMedia(metadata, mediaItem, identify, job) {
   if (!metadata || !metadata.enabled) return;
   const key = `md:${mediaItem.id}`;
   if (stateRepo.get(key)) return;
-  await metadata.enrich(mediaItem, identify);
-  stateRepo.set(key, '1');
+  const matched = await metadata.enrich(mediaItem, identify);
+  if (matched) stateRepo.set(key, '1');
   job.advance(0); // mantém UI viva
 }
 
@@ -309,7 +358,8 @@ async function scanServer(serverId, { job } = {}) {
       mediaRepo.setMetadataStatus(id, 'skipped');
       continue;
     }
-    const identify = identifyFilename(title);
+    const row = mediaRepo.get(id);
+    const identify = identifyFilename(row.manual_title || title);
     mediaRepo.updateMetadata(id, {
       normalized_title: normalizeTitle(title),
       season: identify.season ?? undefined,
@@ -322,8 +372,7 @@ async function scanServer(serverId, { job } = {}) {
     });
     identified++;
     if (config.ENABLE_METADATA) {
-      const m = mediaRepo.get(id);
-      await fetchMetadataForMedia(metadata, m, identify, job);
+      await fetchMetadataForMedia(metadata, row, identify, job);
       enriched++;
     }
   }

@@ -15,7 +15,7 @@ const OTHER_TAGS = [
   'webdl', 'webrip', 'bluray', 'hdtv', 'hdr', 'uhd', 'sdr', 'amzn', 'hmax',
   'dual', 'dualp', 'vinci', 'yts', 'yify', 'rarbg', 'ettv', 'eztv', 'deflate',
   'vff', 'vostfr', 'multi.audio', 'xvid', 'divx',
-  'www', 'bludv', 'fullhd', 'full-hd', 'hdrip', 'hd-rip', 'brrip', 'bdrip', 'web-dl', 'webdl',
+  'www', 'bludv', 'fullhd', 'full-hd', 'full.hd', 'full hd', 'hd', 'hdrip', 'hd-rip', 'brrip', 'bdrip', 'web-dl', 'webdl',
   'nf', 'promo', '1xbet', 'bet365', 'casino', 'aposta', 'comercial', 'propaganda', 'dinheiro', 'livre',
 ];
 
