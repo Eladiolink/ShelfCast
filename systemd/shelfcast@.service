@@ -1,12 +1,12 @@
 [Unit]
-Description=Media Library — galeria web de mídias DLNA
+Description=ShelfCast — galeria web de mídias DLNA
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/node /opt/media-library/src/index.js
-WorkingDirectory=/opt/media-library
+ExecStart=/usr/bin/node /opt/shelfcast/src/index.js
+WorkingDirectory=/opt/shelfcast
 Restart=on-failure
 RestartSec=5
 # Reinicia caso a aplicação saia inesperadamente
@@ -14,8 +14,8 @@ RestartPreventExitStatus=1
 User=%i
 Group=%i
 # Logs (também gravados estruturados em data/logs/)
-StandardOutput=append:/var/log/media-library.log
-StandardError=append:/var/log/media-library.log
+StandardOutput=append:/var/log/shelfcast.log
+StandardError=append:/var/log/shelfcast.log
 Environment=NODE_ENV=production
 
 # Hardening (segurança em ambiente doméstico)

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# Media Library — instalador para Linux
+# ShelfCast — instalador para Linux
 # Verifica dependências, instala, configura o serviço systemd e inicia.
 #
 set -euo pipefail
 
-APP_NAME="media-library"
+APP_NAME="shelfcast"
 INSTALL_DIR="/opt/${APP_NAME}"
 SERVICE_NAME="${APP_NAME}"
 PORT_DEFAULT=8080
@@ -30,7 +30,7 @@ fi
 
 echo ""
 echo "  ┌────────────────────────────────────────────┐"
-echo "  │           Media Library · instalador       │"
+echo "  │            ShelfCast · instalador          │"
 echo "  └────────────────────────────────────────────┘"
 echo ""
 
@@ -67,6 +67,7 @@ info "Copiando arquivos para ${INSTALL_DIR}…"
 $SUDO mkdir -p "${INSTALL_DIR}"
 $SUDO cp -r "${SCRIPT_DIR}/src" "${INSTALL_DIR}/src"
 $SUDO cp -r "${SCRIPT_DIR}/public" "${INSTALL_DIR}/public"
+$SUDO cp -r "${SCRIPT_DIR}/electron" "${INSTALL_DIR}/electron"
 $SUDO cp "${SCRIPT_DIR}/package.json" "${INSTALL_DIR}/package.json"
 $SUDO cp "${SCRIPT_DIR}/.env.example" "${INSTALL_DIR}/.env.example"
 $SUDO cp -r "${SCRIPT_DIR}/systemd" "${INSTALL_DIR}/systemd"
@@ -79,11 +80,65 @@ DATA_DIR="${INSTALL_DIR}/data"
 $SUDO mkdir -p "${DATA_DIR}"/{posters,backdrops,thumbnails,cache,logs}
 $SUDO chown -R "${RUN_USER}:${RUN_USER}" "${INSTALL_DIR}" "${DATA_DIR}"
 
+# ---------------------------------------------------------------
+# 3a. Migração de instalação anterior (media-library)
+# ---------------------------------------------------------------
+LEGACY_DIR="/opt/media-library"
+if [[ -d "${LEGACY_DIR}" && -f "${LEGACY_DIR}/.env" ]]; then
+  info "Instalação anterior encontrada em ${LEGACY_DIR} — migrando…"
+  if [[ ! -f "${INSTALL_DIR}/.env" ]]; then
+    $SUDO cp "${LEGACY_DIR}/.env" "${INSTALL_DIR}/.env"
+    ok "Configuração (.env) migrada"
+  fi
+  if [[ -d "${LEGACY_DIR}/data" ]]; then
+    $SUDO cp -rn "${LEGACY_DIR}/data/." "${INSTALL_DIR}/data/"
+    $SUDO chown -R "${RUN_USER}:${RUN_USER}" "${INSTALL_DIR}/data"
+    ok "Dados (biblioteca, pôsteres, cache) migrados"
+  fi
+  if [[ -f "/etc/systemd/system/media-library.service" ]]; then
+    warn "Removendo serviço antigo media-library…"
+    $SUDO systemctl disable --now media-library 2>/dev/null || true
+    $SUDO rm -f "/etc/systemd/system/media-library.service"
+    $SUDO rm -f /var/log/media-library.log
+    $SUDO rm -f /usr/share/applications/media-library.desktop /usr/local/bin/media-library
+    $SUDO rm -f "/usr/share/icons/hicolor/256x256/apps/media-library.png"
+  fi
+fi
+
 if [[ ! -f "${INSTALL_DIR}/.env" ]]; then
   $SUDO cp "${INSTALL_DIR}/.env.example" "${INSTALL_DIR}/.env"
   ok "Configuração padrão criada (.env)"
 else
   ok ".env já existe, mantido"
+fi
+$SUDO chown "${RUN_USER}:${RUN_USER}" "${INSTALL_DIR}/.env"
+
+# ---------------------------------------------------------------
+# 3b. Dependências (Electron — app desktop)
+# ---------------------------------------------------------------
+info "Instalando dependências do app desktop (Electron)…"
+if $SUDO -u "${RUN_USER}" npm install --prefix "${INSTALL_DIR}" --no-audit --no-fund --loglevel=error; then
+  ok "Dependências instaladas"
+else
+  warn "npm install falhou — o atalho do app desktop não abrirá."
+fi
+
+ELECTRON_DIR="${INSTALL_DIR}/node_modules/electron"
+# O npm pode bloquear o script pós-instalação do Electron (que baixa o binário).
+# Se faltar o binário, copia do clone do repositório (se existir) ou baixa manualmente.
+if [[ ! -x "${ELECTRON_DIR}/dist/electron" ]]; then
+  info "Binário do Electron ausente — recuperando…"
+  if [[ -x "${SCRIPT_DIR}/node_modules/electron/dist/electron" ]]; then
+    $SUDO rm -rf "${ELECTRON_DIR}/dist"
+    $SUDO cp -r "${SCRIPT_DIR}/node_modules/electron/dist" "${ELECTRON_DIR}/dist"
+    $SUDO cp "${SCRIPT_DIR}/node_modules/electron/path.txt" "${ELECTRON_DIR}/path.txt"
+    ok "Binário copiado do repositório"
+  else
+    $SUDO -u "${RUN_USER}" node "${ELECTRON_DIR}/install.js" 2>/dev/null || true
+    if [[ ! -x "${ELECTRON_DIR}/dist/electron" ]]; then
+      warn "Electron não foi baixado — o atalho do app desktop não abrirá."
+    fi
+  fi
 fi
 
 # ---------------------------------------------------------------
@@ -95,7 +150,7 @@ SERVICE_FILE="/etc/systemd/system/${SERVICE_UNIT}"
 info "Instalando serviço systemd (${SERVICE_UNIT})…"
 $SUDO bash -c "cat > ${SERVICE_FILE}" <<EOF
 [Unit]
-Description=Media Library — galeria web de mídias DLNA
+Description=ShelfCast — galeria web de mídias DLNA
 After=network-online.target
 Wants=network-online.target
 
@@ -107,8 +162,8 @@ Restart=on-failure
 RestartSec=5
 User=${RUN_USER}
 Group=${RUN_USER}
-StandardOutput=append:/var/log/media-library.log
-StandardError=append:/var/log/media-library.log
+StandardOutput=append:/var/log/shelfcast.log
+StandardError=append:/var/log/shelfcast.log
 Environment=NODE_ENV=production
 NoNewPrivileges=true
 PrivateTmp=true
@@ -118,10 +173,35 @@ WantedBy=multi-user.target
 EOF
 
 $SUDO mkdir -p /var/log
-$SUDO touch /var/log/media-library.log
-$SUDO chown "${RUN_USER}:${RUN_USER}" /var/log/media-library.log
+$SUDO touch /var/log/shelfcast.log
+$SUDO chown "${RUN_USER}:${RUN_USER}" /var/log/shelfcast.log
 $SUDO systemctl daemon-reload
 $SUDO systemctl enable "${SERVICE_UNIT}"
+
+# ---------------------------------------------------------------
+# 4b. Atalho no menu de aplicativos (app desktop)
+# ---------------------------------------------------------------
+info "Criando atalho no menu de aplicativos…"
+$SUDO mkdir -p /usr/share/icons/hicolor/256x256/apps
+$SUDO cp "${SCRIPT_DIR}/electron/assets/icon.png" "/usr/share/icons/hicolor/256x256/apps/${APP_NAME}.png"
+$SUDO bash -c "cat > /usr/share/applications/${APP_NAME}.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=ShelfCast
+GenericName=ShelfCast
+Comment=Galeria web de mídias DLNA
+Exec=/usr/local/bin/${APP_NAME}
+Icon=${APP_NAME}
+Terminal=false
+Categories=AudioVideo;Video;Player;
+StartupNotify=true
+EOF
+$SUDO bash -c "cat > /usr/local/bin/${APP_NAME}" <<EOF
+#!/usr/bin/env bash
+exec /usr/bin/node ${INSTALL_DIR}/node_modules/.bin/electron ${INSTALL_DIR}/electron/main.js
+EOF
+$SUDO chmod +x "/usr/local/bin/${APP_NAME}"
+ok "Atalho criado (procure por \"ShelfCast\" no menu)"
 
 # ---------------------------------------------------------------
 # 5. Iniciar aplicação

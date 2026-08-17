@@ -1,4 +1,4 @@
-# Media Library
+# ShelfCast
 
 Aplicação para **Linux** que transforma seus servidores **DLNA/UPnP** (MiniDLNA, ReadyMedia, Jellyfin, etc.) em uma **biblioteca pessoal de streaming** acessível pelo navegador.
 
@@ -38,7 +38,7 @@ chmod +x install.sh
 ./install.sh
 ```
 
-O instalador verifica dependências, copia a aplicação para `/opt/media-library`, cria `.env` padrão, configura e inicia o serviço systemd. Ao final:
+O instalador verifica dependências, copia a aplicação para `/opt/shelfcast`, cria `.env` padrão, configura e inicia o serviço systemd. Ao final:
 
 ```
 ✓ Aplicação instalada
@@ -49,7 +49,7 @@ http://localhost:8080
 ### Manual
 
 ```bash
-git clone <repositorio> media-library && cd media-library
+git clone <repositorio> shelfcast && cd shelfcast
 cp .env.example .env
 node src/index.js
 ```
@@ -201,22 +201,22 @@ Requisitos: Linux com display. O mpv é **opcional** (usado apenas no botão "�
 
 ## Como executar como serviço
 
-Após `install.sh`, o serviço `media-library` fica ativo:
+Após `install.sh`, o serviço `shelfcast` fica ativo:
 
 ```bash
-systemctl status media-library
-journalctl -u media-library -f          # logs
-systemctl restart media-library
-systemctl stop media-library
+systemctl status shelfcast
+journalctl -u shelfcast -f          # logs
+systemctl restart shelfcast
+systemctl stop shelfcast
 ```
 
 Para **serviço de usuário** (sem sudo), use a unidade incluída:
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp systemd/media-library@.service ~/.config/systemd/user/
-systemctl --user enable media-library@$USER
-systemctl --user start media-library@$USER
+cp systemd/shelfcast@.service ~/.config/systemd/user/
+systemctl --user enable shelfcast@$USER
+systemctl --user start shelfcast@$USER
 ```
 
 ## Estrutura do projeto
@@ -293,7 +293,7 @@ Cobrem: identificação de nomes, parser XML, parsing DIDL-Lite, banco/repositó
 - Metadados são buscados em segundo plano; aguarde ou use **Configurações → Buscar metadados**.
 
 **Logs**
-- Arquivos estruturados em `data/logs/` ou `journalctl -u media-library -f`.
+- Arquivos estruturados em `data/logs/` ou `journalctl -u shelfcast -f`.
 - Defina `LOG_LEVEL=debug` para mais detalhes.
 
 **Limpar dados**

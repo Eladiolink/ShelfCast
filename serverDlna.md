@@ -801,8 +801,8 @@ O serviço deverá:
 Exemplo:
 
 ```text
-systemctl --user enable media-library
-systemctl --user start media-library
+systemctl --user enable shelfcast
+systemctl --user start shelfcast
 ```
 
 Prefira um serviço de usuário quando não forem necessários privilégios administrativos.
@@ -1184,7 +1184,7 @@ Ao abrir a aplicação pela primeira vez:
 
 ```text
 ┌──────────────────────────────┐
-│     Media Library            │
+│     ShelfCast            │
 │                              │
 │  Procurando servidores...    │
 │                              │

@@ -371,7 +371,7 @@ class MetadataManager {
     if (cached) {
       try {
         const data = JSON.parse(cached.data);
-        await this._applyMovie(mediaItem.id, data);
+        await this._applyMovie(mediaItem.id, data, identify.title);
         return data;
       } catch { /* refetch */ }
     }
@@ -405,7 +405,7 @@ class MetadataManager {
       // fallbacks (AniList/Jikan) aplicam títulos em inglês e não devem
       // "envenenar" o cache, para permitir re-casamento quando o TMDB voltar.
       if (best.c.provider === 'tmdb') this.cache.set(cacheKey, 'movie', best.c);
-      await this._applyMovie(mediaItem.id, best.c);
+      await this._applyMovie(mediaItem.id, best.c, identify.title);
       return best.c;
     }
     mediaRepo.setMetadataStatus(mediaItem.id, 'unmatched');
@@ -430,7 +430,7 @@ class MetadataManager {
       const best = scored[0];
       if (best && best.score >= 0.55) {
         data = best.c;
-        this.cache.set(cacheKey, 'series', data);
+        if (data.provider === 'tmdb') this.cache.set(cacheKey, 'series', data);
       }
     }
     if (data) {
@@ -441,14 +441,19 @@ class MetadataManager {
     return null;
   }
 
-  async _applyMovie(mediaItemId, m) {
+  async _applyMovie(mediaItemId, m, localTitle) {
     const poster = (m.posterUrl ? await getCachedImage('posters', m.posterUrl) : null)
       || (m.posterOriginalUrl ? await getCachedImage('posters', m.posterOriginalUrl) : null);
     const backdrop = m.backdropUrl ? await getCachedImage('backdrops', m.backdropUrl) : null;
 
+    // Só o TMDB fornece título no idioma configurado (pt-BR); provedores de
+    // fallback (AniList/Jikan/TVMaze) retornam títulos em inglês, então mantém
+    // o título local do arquivo e usa apenas pôster/informações deles.
+    const title = m.provider === 'tmdb' ? m.title : (localTitle || m.title);
+
     movieRepo.upsert({
       media_item_id: mediaItemId,
-      title: m.title,
+      title,
       year: m.year,
       rating: m.rating,
       overview: m.overview,
@@ -476,8 +481,12 @@ class MetadataManager {
       || (s.posterOriginalUrl ? await getCachedImage('posters', s.posterOriginalUrl) : null);
     const backdrop = s.backdropUrl ? await getCachedImage('backdrops', s.backdropUrl) : null;
 
+    // Só o TMDB fornece título no idioma configurado (pt-BR); fallbacks
+    // (AniList/Jikan/TVMaze) retornam em inglês, então mantém o título local.
+    const seriesTitle = s.provider === 'tmdb' ? s.title : identify.title;
+
     const seriesId = seriesRepo.upsert({
-      title: s.title,
+      title: seriesTitle,
       original_title: s.originalTitle || s.title,
       year: s.year,
       rating: s.rating,

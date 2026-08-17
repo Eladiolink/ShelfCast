@@ -13,6 +13,7 @@ export const api = {
   },
   get: (p) => api.request(p),
   post: (p, body) => api.request(p, { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
+  put: (p, body) => api.request(p, { method: 'PUT', body: body ? JSON.stringify(body) : undefined }),
   del: (p) => api.request(p, { method: 'DELETE' }),
 };
 

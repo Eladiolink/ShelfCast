@@ -108,7 +108,7 @@ function createWindow() {
     height: 860,
     minWidth: 800,
     minHeight: 600,
-    title: 'Media Library',
+    title: 'ShelfCast',
     backgroundColor: '#0f1117',
     autoHideMenuBar: true,
     icon: ICON,
@@ -145,9 +145,9 @@ function createWindow() {
 function createTray() {
   const icon = nativeImage.createFromPath(ICON);
   tray = new Tray(icon.resize({ width: 18, height: 18 }));
-  tray.setToolTip('Media Library');
+  tray.setToolTip('ShelfCast');
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Abrir Media Library', click: () => { if (!mainWindow) createWindow(); else mainWindow.show(); } },
+    { label: 'Abrir ShelfCast', click: () => { if (!mainWindow) createWindow(); else mainWindow.show(); } },
     { label: 'Web (navegador)', click: () => shell.openExternal(BASE) },
     { type: 'separator' },
     { label: 'Reiniciar servidor', click: () => restartServer().catch((e) => console.error('falha ao reiniciar servidor:', e.message)) },

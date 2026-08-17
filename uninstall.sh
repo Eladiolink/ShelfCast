@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# Media Library — desinstalador para Linux
-# Remove o serviço systemd, os arquivos instalados em /opt/media-library
+# ShelfCast — desinstalador para Linux
+# Remove o serviço systemd, os arquivos instalados em /opt/shelfcast
 # e os logs. O diretório de dados (biblioteca, cache, pôsteres) é mantido
 # por padrão; use --purge para apagar tudo.
 #
 set -euo pipefail
 
-APP_NAME="media-library"
+APP_NAME="shelfcast"
 INSTALL_DIR="/opt/${APP_NAME}"
 SERVICE_NAME="${APP_NAME}"
 
@@ -31,7 +31,7 @@ fi
 
 echo ""
 echo "  ┌────────────────────────────────────────────┐"
-echo "  │        Media Library · desinstalador       │"
+echo "  │          ShelfCast · desinstalador         │"
 echo "  └────────────────────────────────────────────┘"
 echo ""
 if [[ "${PURGE}" -eq 1 ]]; then
@@ -81,12 +81,35 @@ else
 fi
 
 # ---------------------------------------------------------------
-# 3. Remover logs
+# 3. Remover atalho do menu
+# ---------------------------------------------------------------
+if [[ -f "/usr/share/applications/${APP_NAME}.desktop" ]]; then
+  $SUDO rm -f "/usr/share/applications/${APP_NAME}.desktop"
+  ok "Atalho do menu removido."
+fi
+$SUDO rm -f "/usr/local/bin/${APP_NAME}"
+$SUDO rm -f "/usr/share/icons/hicolor/256x256/apps/${APP_NAME}.png"
+
+# ---------------------------------------------------------------
+# 4. Remover logs
 # ---------------------------------------------------------------
 if [[ -f "/var/log/${APP_NAME}.log" ]]; then
   $SUDO rm -f "/var/log/${APP_NAME}.log"
   ok "Log /var/log/${APP_NAME}.log removido."
 fi
+
+# ---------------------------------------------------------------
+# 5. Remover resquícios da instalação antiga (media-library)
+# ---------------------------------------------------------------
+if [[ -f "/etc/systemd/system/media-library.service" ]]; then
+  info "Removendo serviço antigo media-library…"
+  $SUDO systemctl disable --now media-library 2>/dev/null || true
+  $SUDO rm -f "/etc/systemd/system/media-library.service"
+fi
+$SUDO rm -f /var/log/media-library.log
+$SUDO rm -f /usr/share/applications/media-library.desktop /usr/local/bin/media-library
+$SUDO rm -f "/usr/share/icons/hicolor/256x256/apps/media-library.png"
+$SUDO systemctl daemon-reload 2>/dev/null || true
 
 echo ""
 if [[ "${PURGE}" -eq 1 ]]; then

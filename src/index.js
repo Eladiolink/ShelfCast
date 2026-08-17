@@ -22,10 +22,10 @@ async function start() {
 
   const server = createServer({ jobs, metadata });
   server.listen(config.PORT, config.HOST, () => {
-    log.info('Media Library iniciada', { url: `http://${config.HOST}:${config.PORT}` });
+    log.info('ShelfCast iniciado', { url: `http://${config.HOST}:${config.PORT}` });
     console.log('');
     console.log('  ┌─────────────────────────────────────────┐');
-    console.log('  │            Media Library                │');
+    console.log('  │              ShelfCast                  │');
     console.log(`  │                                         │`);
     console.log(`  │  Acesse: http://localhost:${config.PORT}          │`);
     console.log('  │                                         │');

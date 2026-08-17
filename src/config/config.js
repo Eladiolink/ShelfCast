@@ -79,6 +79,35 @@ const INTERVALS = {
 config.SCAN_INTERVAL_MS = INTERVALS[config.SCAN_INTERVAL] || 1_800_000;
 config.DISCOVERY_INTERVAL_MS = INTERVALS[config.DISCOVERY_INTERVAL] || 600_000;
 
+/**
+ * Atualiza variáveis no arquivo .env preservando comentários e ordem.
+ * As variáveis informadas são sobrescritas (ou adicionadas ao final).
+ */
+function saveEnvVars(changes) {
+  const lines = fs.existsSync(DEFAULT_ENV) ? fs.readFileSync(DEFAULT_ENV, 'utf8').split(/\r?\n/) : [];
+  const out = [];
+  const seen = new Set();
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith('#')) {
+      const idx = line.indexOf('=');
+      if (idx !== -1) {
+        const key = line.slice(0, idx).trim();
+        if (key in changes) {
+          out.push(`${key}=${changes[key]}`);
+          seen.add(key);
+          continue;
+        }
+      }
+    }
+    out.push(line);
+  }
+  for (const [key, value] of Object.entries(changes)) {
+    if (!seen.has(key)) out.push(`${key}=${value}`);
+  }
+  fs.writeFileSync(DEFAULT_ENV, out.join('\n') + '\n');
+}
+
 config.ensureDirs = function ensureDirs() {
   const dirs = [
     config.DATA_DIR,
@@ -93,3 +122,4 @@ config.ensureDirs = function ensureDirs() {
 };
 
 module.exports = config;
+module.exports.saveEnvVars = saveEnvVars;

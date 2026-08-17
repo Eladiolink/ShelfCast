@@ -1,11 +1,11 @@
 {
-  "name": "media-library",
+  "name": "shelfcast",
   "version": "1.0.0",
   "description": "Servidor/aplicação de mídia local para Linux — galeria web alimentada por servidores DLNA/UPnP",
   "main": "src/index.js",
   "type": "commonjs",
   "bin": {
-    "media-library": "./src/index.js"
+    "shelfcast": "./src/index.js"
   },
   "scripts": {
     "start": "node src/index.js",

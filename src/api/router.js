@@ -63,6 +63,20 @@ function readRawBody(req, limit = 15 * 1024 * 1024) {
   });
 }
 
+/**
+ * Valida uma chave TMDB contra a API. Retorna true (válida), false (401) ou
+ * null (indeterminado — falha de rede/timeout; a chave é salva mesmo assim).
+ */
+async function checkTmdbKey(key) {
+  try {
+    const res = await fetch(`https://api.themoviedb.org/3/configuration?api_key=${encodeURIComponent(key)}`, { signal: AbortSignal.timeout(8000) });
+    if (res.status === 401) return false;
+    return res.ok ? true : null;
+  } catch {
+    return null;
+  }
+}
+
 function extFromMime(contentType) {
   const m = String(contentType || '').toLowerCase();
   if (m.includes('png')) return '.png';
@@ -168,7 +182,11 @@ async function handleApi(req, res, { jobs, metadata, app }) {
 
   // ---- Servidores ----
   if (p === '/api/servers' && method === 'GET') {
-    const servers = serverRepo.list().map((s) => decorateServer(s));
+    const servers = serverRepo.list().map((s) => {
+      const dec = decorateServer(s);
+      dec.media_count = mediaRepo.totalCount(s.id);
+      return dec;
+    });
     return json(res, 200, servers);
   }
 
@@ -656,7 +674,32 @@ async function handleApi(req, res, { jobs, metadata, app }) {
   }
 
   if (p === '/api/settings' && method === 'PUT') {
-    return json(res, 501, { error: 'Alterar configurações em tempo real não suportado; edite o .env' });
+    const { saveEnvVars } = require('../config/config.js');
+    const body = await readBody(req);
+    const key = String(body.tmdbApiKey ?? '').trim();
+
+    if (!key) {
+      saveEnvVars({ TMDB_API_KEY: '' });
+      config.TMDB_API_KEY = '';
+      config.TMDB_ENABLED = false;
+      log.info('chave TMDB removida via API');
+      return json(res, 200, { ok: true, tmdbConfigured: false, tmdbEnabled: false });
+    }
+
+    if (!/^[a-f0-9]{32}$/i.test(key)) {
+      return json(res, 400, { error: 'Chave TMDB inválida: use o formato de 32 caracteres hexadecimais exibido em themoviedb.org' });
+    }
+
+    const verified = await checkTmdbKey(key);
+    if (verified === false) {
+      return json(res, 400, { error: 'Chave TMDB inválida: a API respondeu 401 (não autorizado). Confira a chave.' });
+    }
+
+    saveEnvVars({ TMDB_API_KEY: key });
+    config.TMDB_API_KEY = key;
+    config.TMDB_ENABLED = true;
+    log.info('chave TMDB atualizada via API', { verified: verified === true });
+    return json(res, 200, { ok: true, tmdbConfigured: true, tmdbEnabled: true, verified: verified === true });
   }
 
   if (p === '/api/settings/test-transcode' && method === 'POST') {

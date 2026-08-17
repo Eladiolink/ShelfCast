@@ -153,7 +153,7 @@ test('rotas desconhecidas retornam 404', async () => {
 test('servidor serve index.html', async () => {
   const r = await req('GET', '/');
   assert.equal(r.status, 200);
-  assert.match(r.raw, /Media Library/);
+  assert.match(r.raw, /ShelfCast/);
 });
 
 test('POST /api/servers/local adiciona pasta local e reusa duplicada', async () => {
