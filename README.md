@@ -38,7 +38,7 @@ chmod +x install.sh
 ./install.sh
 ```
 
-O instalador verifica dependências, copia a aplicação para `/opt/shelfcast`, cria `.env` padrão, configura e inicia o serviço systemd. Ao final:
+O instalador verifica dependências, copia a aplicação para `~/.var/shelfcast` (instalação por usuário, sem `sudo`), cria `.env` padrão, configura e inicia o serviço systemd de usuário. Ao final:
 
 ```
 ✓ Aplicação instalada
@@ -201,22 +201,21 @@ Requisitos: Linux com display. O mpv é **opcional** (usado apenas no botão "�
 
 ## Como executar como serviço
 
-Após `install.sh`, o serviço `shelfcast` fica ativo:
+Após `install.sh`, o serviço de usuário `shelfcast` fica ativo (o instalador ativa `loginctl enable-linger`, então o serviço inicia no boot mesmo sem login):
 
 ```bash
-systemctl status shelfcast
-journalctl -u shelfcast -f          # logs
-systemctl restart shelfcast
-systemctl stop shelfcast
+systemctl --user status shelfcast
+journalctl --user -u shelfcast -f   # logs
+systemctl --user restart shelfcast
+systemctl --user stop shelfcast
 ```
 
-Para **serviço de usuário** (sem sudo), use a unidade incluída:
+Para instalação **em todo o sistema** (`/opt` + systemd global), use a unidade incluída:
 
 ```bash
-mkdir -p ~/.config/systemd/user
-cp systemd/shelfcast@.service ~/.config/systemd/user/
-systemctl --user enable shelfcast@$USER
-systemctl --user start shelfcast@$USER
+sudo cp systemd/shelfcast@.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now shelfcast@$USER
 ```
 
 ## Estrutura do projeto

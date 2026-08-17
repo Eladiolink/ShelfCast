@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 #
-# ShelfCast — desinstalador para Linux
-# Remove o serviço systemd, os arquivos instalados em /opt/shelfcast
-# e os logs. O diretório de dados (biblioteca, cache, pôsteres) é mantido
-# por padrão; use --purge para apagar tudo.
+# ShelfCast — desinstalador para Linux (por usuário)
+# Remove o serviço systemd de usuário, os arquivos instalados em
+# ~/.var/shelfcast e os atalhos. O diretório de dados (biblioteca, cache,
+# pôsteres) é mantido por padrão; use --purge para apagar tudo.
 #
 set -euo pipefail
 
 APP_NAME="shelfcast"
-INSTALL_DIR="/opt/${APP_NAME}"
 SERVICE_NAME="${APP_NAME}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
@@ -23,11 +22,38 @@ if [[ "${1:-}" == "--purge" ]]; then
   PURGE=1
 fi
 
+# ---------------------------------------------------------------
+# 0. Detectar usuário/diretórios
+# ---------------------------------------------------------------
 if [[ "$(id -u)" -eq 0 ]]; then
-  SUDO=""
+  RUN_USER="$(logname 2>/dev/null || echo root)"
+  RUN_AS_ROOT=1
 else
-  SUDO="sudo"
+  RUN_USER="$(id -un)"
+  RUN_AS_ROOT=0
 fi
+USER_HOME="$(getent passwd "${RUN_USER}" | cut -d: -f6)"
+INSTALL_DIR="${USER_HOME}/.var/${APP_NAME}"
+LOCAL_BIN="${USER_HOME}/.local/bin"
+LOCAL_APPS="${USER_HOME}/.local/share/applications"
+LOCAL_ICONS="${USER_HOME}/.local/share/icons/hicolor/256x256/apps"
+SYSTEMD_USER_DIR="${USER_HOME}/.config/systemd/user"
+
+# systemctl --user, funcional mesmo quando o desinstalador roda com sudo
+systemctl_user() {
+  if [[ "${RUN_AS_ROOT}" -eq 1 ]]; then
+    local uid
+    uid="$(id -u "${RUN_USER}")"
+    if [[ ! -d "/run/user/${uid}" ]]; then
+      mkdir -p "/run/user/${uid}"
+      chown "${RUN_USER}:${RUN_USER}" "/run/user/${uid}"
+      chmod 700 "/run/user/${uid}"
+    fi
+    sudo -u "${RUN_USER}" XDG_RUNTIME_DIR="/run/user/${uid}" systemctl --user "$@"
+  else
+    systemctl --user "$@"
+  fi
+}
 
 echo ""
 echo "  ┌────────────────────────────────────────────┐"
@@ -47,17 +73,17 @@ if [[ "${CONFIRM,,}" != "s" && "${CONFIRM,,}" != "y" ]]; then
 fi
 
 # ---------------------------------------------------------------
-# 1. Parar e remover o serviço systemd
+# 1. Parar e remover o serviço systemd de usuário
 # ---------------------------------------------------------------
-if [[ -f "/etc/systemd/system/${SERVICE_NAME}.service" ]]; then
-  info "Parando e removendo o serviço systemd…"
-  $SUDO systemctl disable --now "${SERVICE_NAME}" 2>/dev/null || \
-    $SUDO systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
-  $SUDO rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
-  $SUDO systemctl daemon-reload
+if [[ -f "${SYSTEMD_USER_DIR}/${SERVICE_NAME}.service" ]]; then
+  info "Parando e removendo o serviço systemd de usuário…"
+  systemctl_user disable --now "${SERVICE_NAME}" 2>/dev/null || \
+    systemctl_user stop "${SERVICE_NAME}" 2>/dev/null || true
+  rm -f "${SYSTEMD_USER_DIR}/${SERVICE_NAME}.service"
+  systemctl_user daemon-reload 2>/dev/null || true
   ok "Serviço ${SERVICE_NAME} removido."
 else
-  info "Serviço systemd não encontrado, ignorando."
+  info "Serviço systemd de usuário não encontrado, ignorando."
 fi
 
 # ---------------------------------------------------------------
@@ -66,13 +92,13 @@ fi
 if [[ -d "${INSTALL_DIR}" ]]; then
   info "Removendo ${INSTALL_DIR}…"
   if [[ "${PURGE}" -eq 1 ]]; then
-    $SUDO rm -rf "${INSTALL_DIR}"
+    rm -rf "${INSTALL_DIR}"
   else
     # Mantém data/ (biblioteca e cache); apaga o resto
     if [[ -d "${INSTALL_DIR}/data" ]]; then
-      $SUDO find "${INSTALL_DIR}" -mindepth 1 -maxdepth 1 ! -name data -exec rm -rf {} +
+      find "${INSTALL_DIR}" -mindepth 1 -maxdepth 1 ! -name data -exec rm -rf {} +
     else
-      $SUDO rm -rf "${INSTALL_DIR}"
+      rm -rf "${INSTALL_DIR}"
     fi
   fi
   ok "Arquivos removidos."
@@ -81,35 +107,44 @@ else
 fi
 
 # ---------------------------------------------------------------
-# 3. Remover atalho do menu
+# 3. Remover atalhos
 # ---------------------------------------------------------------
-if [[ -f "/usr/share/applications/${APP_NAME}.desktop" ]]; then
-  $SUDO rm -f "/usr/share/applications/${APP_NAME}.desktop"
+if [[ -f "${LOCAL_APPS}/${APP_NAME}.desktop" ]]; then
+  rm -f "${LOCAL_APPS}/${APP_NAME}.desktop"
   ok "Atalho do menu removido."
 fi
-$SUDO rm -f "/usr/local/bin/${APP_NAME}"
-$SUDO rm -f "/usr/share/icons/hicolor/256x256/apps/${APP_NAME}.png"
+rm -f "${LOCAL_BIN}/${APP_NAME}"
+rm -f "${LOCAL_ICONS}/${APP_NAME}.png"
 
 # ---------------------------------------------------------------
-# 4. Remover logs
+# 4. Resquícios de instalações antigas em /opt (exige sudo)
 # ---------------------------------------------------------------
-if [[ -f "/var/log/${APP_NAME}.log" ]]; then
-  $SUDO rm -f "/var/log/${APP_NAME}.log"
-  ok "Log /var/log/${APP_NAME}.log removido."
+if [[ "${RUN_AS_ROOT}" -eq 1 ]]; then
+  if [[ -f "/etc/systemd/system/${SERVICE_NAME}.service" ]]; then
+    info "Removendo serviço antigo em /etc/systemd/system…"
+    systemctl disable --now "${SERVICE_NAME}" 2>/dev/null || true
+    rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
+    rm -f /var/log/${SERVICE_NAME}.log
+    rm -f "/usr/share/applications/${SERVICE_NAME}.desktop" "/usr/local/bin/${SERVICE_NAME}"
+    rm -f "/usr/share/icons/hicolor/256x256/apps/${SERVICE_NAME}.png"
+    systemctl daemon-reload
+  fi
+  if [[ -f "/etc/systemd/system/media-library.service" ]]; then
+    info "Removendo serviço antigo media-library…"
+    systemctl disable --now media-library 2>/dev/null || true
+    rm -f "/etc/systemd/system/media-library.service"
+  fi
+  rm -f /var/log/media-library.log
+  rm -f /usr/share/applications/media-library.desktop /usr/local/bin/media-library
+  rm -f "/usr/share/icons/hicolor/256x256/apps/media-library.png"
+  if [[ -d "/opt/${APP_NAME}" ]]; then
+    warn "/opt/${APP_NAME} ainda existe (instalação antiga) — remova com: sudo rm -rf /opt/${APP_NAME}"
+  fi
+else
+  if [[ -d "/opt/${APP_NAME}" || -f "/etc/systemd/system/${SERVICE_NAME}.service" ]]; then
+    warn "Resquícios da instalação antiga em /opt — rode o desinstalador com sudo para limpá-los."
+  fi
 fi
-
-# ---------------------------------------------------------------
-# 5. Remover resquícios da instalação antiga (media-library)
-# ---------------------------------------------------------------
-if [[ -f "/etc/systemd/system/media-library.service" ]]; then
-  info "Removendo serviço antigo media-library…"
-  $SUDO systemctl disable --now media-library 2>/dev/null || true
-  $SUDO rm -f "/etc/systemd/system/media-library.service"
-fi
-$SUDO rm -f /var/log/media-library.log
-$SUDO rm -f /usr/share/applications/media-library.desktop /usr/local/bin/media-library
-$SUDO rm -f "/usr/share/icons/hicolor/256x256/apps/media-library.png"
-$SUDO systemctl daemon-reload 2>/dev/null || true
 
 echo ""
 if [[ "${PURGE}" -eq 1 ]]; then
@@ -119,4 +154,7 @@ else
   echo "  Seus dados ficaram em ${INSTALL_DIR}/data — apague manualmente"
   echo "  quando quiser, ou rode novamente com --purge."
 fi
+echo ""
+info "Linger ainda está ativo para ${RUN_USER} (afeta qualquer serviço de usuário)."
+info "Para desativar: loginctl disable-linger ${RUN_USER}"
 echo ""
