@@ -2,6 +2,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const os = require('node:os');
 const config = require('./config/config.js');
 const logger = require('./config/logger.js');
 const db = require('./database/db.js');
@@ -13,6 +14,34 @@ const { serverRepo, mediaRepo } = require('./database/repositories.js');
 
 const log = logger.child({ module: 'main' });
 
+function networkUrls(port) {
+  const urls = [];
+  for (const ifaces of Object.values(os.networkInterfaces())) {
+    for (const i of ifaces || []) {
+      if (i.family !== 'IPv4' || i.internal) continue;
+      urls.push(`http://${i.address}:${port}`);
+    }
+  }
+  return urls;
+}
+
+function banner(urls, port) {
+  const W = 41;
+  const lines = [
+    'ShelfCast',
+    '',
+    `Local:  http://localhost:${port}`,
+    ...(urls.length ? urls.map((u) => `Rede:   ${u}`) : ['Rede:   (nenhuma interface detectada)']),
+    '',
+  ];
+  const box = [
+    `  ┌${'─'.repeat(W)}┐`,
+    ...lines.map((l) => `  │ ${l.padEnd(W)}│`),
+    `  └${'─'.repeat(W)}┘`,
+  ];
+  return box.join('\n');
+}
+
 async function start() {
   config.ensureDirs();
   db.open();
@@ -22,14 +51,10 @@ async function start() {
 
   const server = createServer({ jobs, metadata });
   server.listen(config.PORT, config.HOST, () => {
-    log.info('ShelfCast iniciado', { url: `http://${config.HOST}:${config.PORT}` });
+    const urls = networkUrls(config.PORT);
+    log.info('ShelfCast iniciado', { host: config.HOST, port: config.PORT, urls });
     console.log('');
-    console.log('  ┌─────────────────────────────────────────┐');
-    console.log('  │              ShelfCast                  │');
-    console.log(`  │                                         │`);
-    console.log(`  │  Acesse: http://localhost:${config.PORT}          │`);
-    console.log('  │                                         │');
-    console.log('  └─────────────────────────────────────────┘');
+    console.log(banner(urls, config.PORT));
     console.log('');
   });
 

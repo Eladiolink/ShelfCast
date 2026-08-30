@@ -41,6 +41,7 @@ class VideoPlayer {
     this._gainNode = null;
     this._fsBound = false;
     this._pendingClose = false;
+    this._fsActive = false;
     if (window.electronAPI && window.electronAPI.onMpvClosed) {
       window.electronAPI.onMpvClosed((data) => {
         if (this._mpvCloseCb) this._mpvCloseCb(data);
@@ -129,10 +130,7 @@ class VideoPlayer {
       volume.innerHTML = icon('volume-2', 20);
       volumeValue.textContent = `${volumeSlider.value}%`;
     };
-    fullscreen.onclick = async () => {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await this.overlay.requestFullscreen();
-    };
+    fullscreen.onclick = () => this._toggleFullscreen();
     back.onclick = () => this.close();
     transcodeBtn.onclick = () => this._reloadWithTranscode();
 
@@ -204,15 +202,15 @@ class VideoPlayer {
       }
     });
 
-    this.video.addEventListener('dblclick', () => fullscreen.onclick());
+    this.video.addEventListener('dblclick', () => this._toggleFullscreen());
     this.overlay.addEventListener('mousemove', () => this._showUi());
     this.overlay.addEventListener('mouseleave', () => this._hideUi());
 
     document.addEventListener('keydown', this._onKey = (e) => {
       if (e.key === 'Escape') {
-        if (document.fullscreenElement) {
+        if (this._isFullscreen()) {
           e.preventDefault();
-          document.exitFullscreen().catch(() => {});
+          this._exitFullscreen();
         } else {
           this.close();
         }
@@ -242,6 +240,38 @@ class VideoPlayer {
     transcodeBtn.title = 'Transcodificar com FFmpeg';
   }
 
+  _isFullscreen() {
+    if (window.electronAPI && window.electronAPI.isElectron) return !!this._fsActive;
+    return !!document.fullscreenElement;
+  }
+
+  _requestFullscreen() {
+    if (this._wasMpv || this._isFullscreen()) return;
+    if (window.electronAPI && window.electronAPI.isElectron && window.electronAPI.setFullScreen) {
+      // No Electron/Linux a tela cheia HTML por elemento é instável;
+      // coloca a JANELA em tela cheia (mais confiável).
+      this._fsActive = true;
+      window.electronAPI.setFullScreen(true);
+    } else if (this.overlay && this.overlay.requestFullscreen) {
+      this.overlay.requestFullscreen().catch(() => {
+        // Tela cheia pode ser negada pelo navegador; segue em janela normal
+      });
+    }
+  }
+
+  _toggleFullscreen() {
+    if (this._isFullscreen()) this._exitFullscreen();
+    else this._requestFullscreen();
+  }
+
+  _exitFullscreen() {
+    if (window.electronAPI && window.electronAPI.isElectron && window.electronAPI.setFullScreen) {
+      window.electronAPI.setFullScreen(false);
+    } else if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    }
+  }
+
   _bindFullscreen() {
     if (this._fsBound) return;
     this._fsBound = true;
@@ -255,6 +285,18 @@ class VideoPlayer {
         }
       }
     });
+    if (window.electronAPI && window.electronAPI.onFullscreenChanged) {
+      window.electronAPI.onFullscreenChanged((fs) => {
+        this._fsActive = !!fs;
+        if (!fs) {
+          this._showUi();
+          if (this._pendingClose) {
+            this._pendingClose = false;
+            this.close();
+          }
+        }
+      });
+    }
   }
 
   _directOk() {
@@ -356,6 +398,7 @@ class VideoPlayer {
     this._bindEvents();
     this._start();
     this._loadTracks();
+    this._requestFullscreen();
 
     // No Electron, oferece "Abrir no mpv" para formatos não-suportados pelo Chromium
     const mpvBtn = this.overlay.querySelector('.mpv-btn');
@@ -563,12 +606,18 @@ class VideoPlayer {
   }
 
   close() {
-    if (document.fullscreenElement) {
+    if (this._isFullscreen()) {
       // Fecha primeiro a tela cheia para não esconder o elemento fullscreen
       // (o que travaria a janela no Chromium/Electron). O fechamento real
-      // acontece no handler de fullscreenchange.
+      // acontece no handler de fullscreenchange / onFullscreenChanged.
       this._pendingClose = true;
-      document.exitFullscreen().catch(() => { this._pendingClose = false; this.close(); });
+      this._exitFullscreen();
+      setTimeout(() => {
+        if (this._pendingClose) {
+          this._pendingClose = false;
+          this.close();
+        }
+      }, 500);
       return;
     }
     this._save(false);

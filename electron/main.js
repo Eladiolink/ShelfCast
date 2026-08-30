@@ -140,6 +140,9 @@ function createWindow() {
       mainWindow.setFullScreen(false);
     }
   });
+
+  mainWindow.on('enter-full-screen', () => notifyRenderer('window:fullscreen-changed', true));
+  mainWindow.on('leave-full-screen', () => notifyRenderer('window:fullscreen-changed', false));
 }
 
 function createTray() {
@@ -249,6 +252,14 @@ ipcMain.handle('mpv:stop', async () => {
 
 ipcMain.handle('mpv:state', async () => {
   return { running: !!(mpv && mpv.isRunning) };
+});
+
+ipcMain.handle('window:setFullScreen', (_e, full) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setFullScreen(!!full);
+    return { ok: true };
+  }
+  return { ok: false };
 });
 
 // ------------------------- app -------------------------
