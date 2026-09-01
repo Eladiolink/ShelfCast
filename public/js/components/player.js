@@ -42,11 +42,25 @@ class VideoPlayer {
     this._fsBound = false;
     this._pendingClose = false;
     this._fsActive = false;
+    this._historyPushed = false;
+    this._closingFromBack = false;
     if (window.electronAPI && window.electronAPI.onMpvClosed) {
       window.electronAPI.onMpvClosed((data) => {
         if (this._mpvCloseCb) this._mpvCloseCb(data);
       });
     }
+    window.addEventListener('popstate', () => {
+      // O player abriu com pushState; ao voltar no navegador, ele deve fechar
+      // sem navegar a página por baixo.
+      if (this.isOpen()) {
+        this._closingFromBack = true;
+        this.close();
+      }
+    });
+  }
+
+  isOpen() {
+    return !!(this.overlay && !this.overlay.classList.contains('hidden'));
   }
 
   open({ media, title, resume = null, onClose = null }) {
@@ -54,6 +68,12 @@ class VideoPlayer {
     this.resume = resume;
     this.onClose = onClose;
     this.title = title;
+    if (!this._historyPushed) {
+      this._historyPushed = true;
+      try {
+        history.pushState({ player: true }, '');
+      } catch { /* estado indisponível (arquivo://) */ }
+    }
     // O player web roda DENTRO da janela do app. MKV é convertido via remux
     // pelo servidor (rápido, sem re-encode pesado). mpv fica como opção.
     this._openWebPlayer();
@@ -620,6 +640,8 @@ class VideoPlayer {
       }, 500);
       return;
     }
+    const fromBack = this._closingFromBack;
+    this._closingFromBack = false;
     this._save(false);
     document.removeEventListener('keydown', this._onKey);
     this.overlay.classList.add('hidden');
@@ -632,6 +654,14 @@ class VideoPlayer {
     if (window.electronAPI && window.electronAPI.isElectron && this._wasMpv) {
       this._wasMpv = false;
       window.electronAPI.stopMpv();
+    }
+    if (this._historyPushed) {
+      this._historyPushed = false;
+      // Fechou pelo botão/Escape: remove a entrada de histórico do player
+      // para o "voltar" do navegador seguir para a página anterior.
+      if (!fromBack) {
+        try { history.back(); } catch { /* ok */ }
+      }
     }
     if (this.onClose) this.onClose();
   }

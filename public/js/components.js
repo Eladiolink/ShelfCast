@@ -14,7 +14,7 @@ export function mediaCard(item, opts = {}) {
   const hideable = opts.hideable !== false && item.hideable !== false;
   const hideBtn = hideable ? `<button class="card-hide" data-hide="${item.id}" title="Ocultar">${icon('eye-off', 14)}</button>` : '';
   return `
-    <div class="${cls}" data-card data-id="${item.id}">
+    <div class="${cls}" data-card data-id="${item.id}" tabindex="-1">
       <div class="media-card-poster">
         ${poster ? `<img loading="lazy" src="${esc(poster)}" alt="${esc(item.title)}" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">` : ''}
         <div class="no-poster" ${poster ? 'style="display:none"' : ''}>▶</div>

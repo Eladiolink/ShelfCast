@@ -79,7 +79,7 @@ export async function renderDetails(id) {
           const epTitle = e.title || '';
           const watched = e.media?.history?.finished ? ` ${icon('check', 14)}` : '';
           return `
-          <div class="episode-row" data-episode="${e.id}" data-media="${e.media?.id || ''}">
+          <div class="episode-row" data-episode="${e.id}" data-media="${e.media?.id || ''}" tabindex="-1">
             <div class="num">${e.episode_number}</div>
             <div class="ep-title">${esc(epTitle || `Episódio ${e.episode_number}`)}${watched}</div>
             ${e.media?.duration ? `<div class="ep-extra">${formatDuration(e.media.duration)}</div>` : ''}

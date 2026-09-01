@@ -9,6 +9,7 @@ import { renderServers } from './pages/servers.js';
 import { renderSettings } from './pages/settings.js';
 import { renderHidden } from './pages/hidden.js';
 import { player } from './components/player.js';
+import { moveFocus, focusFirst, isTypingTarget } from './nav.js';
 
 const routes = {
   '': renderHome,
@@ -92,11 +93,83 @@ function bindGlobal() {
     } catch { /* ignore */ }
   }, 5000);
 
+  let keyboardNav = false;
   document.addEventListener('keydown', (e) => {
-    if (e.key === '/' && !/input|textarea|select/.test(document.activeElement?.tagName || '')) {
+    if (e.key.startsWith('Arrow') || e.key === 'Enter' || e.key === ' ') keyboardNav = true;
+    // Navegação do player tem prioridade
+    if (player.isOpen()) return;
+
+    // '/' foca a busca global
+    if (e.key === '/' && !isTypingTarget(document.activeElement)) {
       e.preventDefault();
       search.focus();
+      return;
     }
+
+    // Escape fecha modais / volta para a página anterior
+    if (e.key === 'Escape') {
+      const modal = document.querySelector('.cover-modal');
+      if (modal) { modal.remove(); return; }
+      const active = document.activeElement;
+      if (isTypingTarget(active)) {
+        if (active.value) active.value = '';
+        active.blur();
+        return;
+      }
+      e.preventDefault();
+      history.back();
+      return;
+    }
+
+    // Setas movem o foco entre cards/botões; Enter ativa
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+      if (isTypingTarget(document.activeElement)) return;
+
+      // No hero da home, esquerda/direita trocam o slide
+      if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !e.shiftKey) {
+        const hero = document.activeElement?.closest?.('.hero-carousel');
+        const btn = hero?.querySelector(e.key === 'ArrowLeft' ? '.hero-arrow.prev' : '.hero-arrow.next');
+        if (btn && !btn.classList.contains('disabled')) {
+          e.preventDefault();
+          btn.click();
+          return;
+        }
+      }
+
+      e.preventDefault();
+      if (e.shiftKey) {
+        // Shift+seta move entre as seções/linhas (scroll)
+        const main = document.getElementById('main');
+        const delta = e.key === 'ArrowDown' ? 400 : e.key === 'ArrowUp' ? -400 : 0;
+        if (delta) { main.scrollBy({ top: delta, behavior: 'smooth' }); return; }
+      }
+      moveFocus(e.key.replace('Arrow', '').toLowerCase());
+      return;
+    }
+    if (e.key === 'Enter' || e.key === ' ') {
+      const a = document.activeElement;
+      if (!a || a === document.body) return;
+      const tag = a.tagName;
+      // Controles nativos já respondem a Enter/Espaço — não interfere
+      if (tag === 'BUTTON' || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'OPTION') return;
+      if (isTypingTarget(a)) return;
+      e.preventDefault();
+      a.click();
+    }
+  });
+
+  // Ao trocar de página, mantém a navegação por teclado disponível
+  window.addEventListener('hashchange', () => {
+    if (player.isOpen()) return;
+    if (!keyboardNav) return;
+    let tries = 0;
+    const attempt = () => {
+      if (document.activeElement !== document.body) return;
+      if (tries++ > 8) return;
+      if (focusFirst()) return;
+      setTimeout(attempt, 80);
+    };
+    setTimeout(attempt, 80);
   });
 }
 
